@@ -188,6 +188,35 @@ for (const kind of SERVERS) {
       await until(async () => (await phone.locator('.media-item').count()) === 1, 2000, 'media grid');
     });
 
+    test('upload a video from the phone and it plays on a shape', async () => {
+      // Record a short all-blue clip to use as the upload.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-vid-'));
+      const recCtx = await browser.newContext({ viewport: { width: 320, height: 240 }, recordVideo: { dir, size: { width: 320, height: 240 } } });
+      const rec = await recCtx.newPage();
+      await rec.setContent('<body style="margin:0;background:#0000ff;height:100vh"></body>');
+      await rec.waitForTimeout(1500);
+      await recCtx.close();
+      const file = path.join(dir, `clip-${kind}.webm`);
+      fs.renameSync(await rec.video().path(), file);
+
+      await phone.click('[data-tab=shapes]');
+      await phone.locator('#shapeList li').nth(1).click(); // the middle shape
+      const id = await phone.evaluate(() => window.__pm.selection.id);
+      await phone.click('[data-tab=look]');
+      await phone.click('#kindSeg [data-kind=video]');
+      await phone.setInputFiles('#fileInput', file);
+      await until(async () => {
+        const s = (await tvState()).shapes.find((x) => x.id === id);
+        return s.content.kind === 'video' && /clip/.test(s.content.media);
+      }, 8000, 'video assigned');
+      const s = (await tvState()).shapes.find((x) => x.id === id);
+      const [cx, cy] = [s.points.reduce((a, p) => a + p[0], 0) / s.points.length, s.points.reduce((a, p) => a + p[1], 0) / s.points.length];
+      const px = await until(async () => { const p = await tvPixel(cx, cy); return p[2] > 180 && p[0] < 80 ? p : null; }, 8000, 'blue video pixels');
+      assert.ok(px[2] > 180);
+      const playing = await tv.evaluate(() => [...window.__pm.renderer.media.values()].some((m) => m.kind === 'video' && !m.el.paused));
+      assert.ok(playing, 'video element is playing');
+    });
+
     test('project survives a projector restart', async () => {
       const before = await tvState();
       await tv.waitForTimeout(1200); // debounced save
