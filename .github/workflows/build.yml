@@ -72,7 +72,7 @@ jobs:
       group: publish-latest-release
       cancel-in-progress: false
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: projection-mapper
           path: dist
@@ -81,8 +81,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release delete latest --cleanup-tag -y || true
-          gh release create latest dist/projection-mapper.apk dist/projection-mapper-server.jar \
-            --target "$GITHUB_SHA" --prerelease=false \
-            --title "Latest build (${GITHUB_REF_NAME} @ ${GITHUB_SHA::7})" \
-            --notes "Install **projection-mapper.apk** on your Google TV / Android TV projector. See the README for step-by-step install instructions. Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA}."
+          # Delete + recreate so the "latest" tag always points at this commit.
+          # Retried because GitHub occasionally rejects a create right after a delete.
+          for attempt in 1 2 3; do
+            gh release delete latest --cleanup-tag -y || true
+            sleep $((attempt * 5))
+            if gh release create latest dist/projection-mapper.apk dist/projection-mapper-server.jar \
+                --target "$GITHUB_SHA" \
+                --title "Latest build (${GITHUB_REF_NAME} @ ${GITHUB_SHA::7})" \
+                --notes "Install **projection-mapper.apk** on your Google TV / Android TV projector. See the README for step-by-step install instructions. Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA}."; then
+              exit 0
+            fi
+            echo "release create failed (attempt $attempt), retrying..."
+          done
+          exit 1
