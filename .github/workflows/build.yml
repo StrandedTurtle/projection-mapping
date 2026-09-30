@@ -45,6 +45,15 @@ jobs:
           mkdir -p ../dist
           cp app/build/outputs/apk/release/app-release.apk ../dist/projection-mapper.apk
           cp server/build/libs/server.jar ../dist/projection-mapper-server.jar
+      - name: Verify the APK contents
+        run: |
+          unzip -l dist/projection-mapper.apk > apk.txt
+          for f in assets/display.html assets/index.html assets/js/engine/renderer.js assets/js/vendor/qrcode.js classes.dex res/drawable-xhdpi-v4/banner.png; do
+            grep -q " $f\$" apk.txt || { echo "::error::APK is missing $f"; cat apk.txt; exit 1; }
+          done
+          "$ANDROID_HOME"/build-tools/*/aapt2 dump badging dist/projection-mapper.apk 2>/dev/null | grep -E "package:|leanback-launchable|sdkVersion|uses-permission: name='android.permission.INTERNET'" || true
+          "$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"/apksigner verify --print-certs dist/projection-mapper.apk | head -3
+          ls -la dist
       - uses: actions/upload-artifact@v4
         with:
           name: projection-mapper
@@ -55,6 +64,9 @@ jobs:
     needs: [test, apk]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-latest-release
+      cancel-in-progress: false
     steps:
       - uses: actions/download-artifact@v4
         with:
