@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 300" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect width="820" height="300" rx="16" fill="#0b0d12"/>
+  <!-- phone -->
+  <rect x="40" y="60" width="120" height="200" rx="18" fill="#151923" stroke="#7c5cff" stroke-width="3"/>
+  <rect x="52" y="80" width="96" height="54" rx="4" fill="#000"/>
+  <path d="M60 92 L98 86 L100 124 L58 122 Z" fill="#22d3ee" opacity=".8"/>
+  <circle cx="60" cy="92" r="4" fill="#fff"/><circle cx="98" cy="86" r="4" fill="#fff"/>
+  <rect x="52" y="146" width="96" height="10" rx="3" fill="#2a3142"/>
+  <rect x="52" y="162" width="70" height="10" rx="3" fill="#2a3142"/>
+  <rect x="52" y="178" width="84" height="10" rx="3" fill="#2a3142"/>
+  <text x="100" y="286" fill="#e8ecf4" font-size="15" text-anchor="middle" font-weight="600">Your phone</text>
+  <text x="100" y="244" fill="#8b95a8" font-size="11" text-anchor="middle">browser – no app</text>
+  <!-- wifi link -->
+  <path d="M175 160 H300" stroke="#8b95a8" stroke-width="2" stroke-dasharray="6 6"/>
+  <text x="238" y="148" fill="#a5b4fc" font-size="13" text-anchor="middle">same Wi‑Fi</text>
+  <text x="238" y="182" fill="#8b95a8" font-size="11" text-anchor="middle">scan QR · live edits</text>
+  <!-- projector -->
+  <rect x="310" y="118" width="150" height="84" rx="14" fill="#151923" stroke="#22d3ee" stroke-width="3"/>
+  <circle cx="436" cy="160" r="20" fill="#0b0d12" stroke="#22d3ee" stroke-width="3"/>
+  <circle cx="436" cy="160" r="8" fill="#7dd3fc"/>
+  <text x="330" y="150" fill="#e8ecf4" font-size="13" font-weight="600">Google TV</text>
+  <text x="330" y="168" fill="#8b95a8" font-size="11">Projection</text>
+  <text x="330" y="182" fill="#8b95a8" font-size="11">Mapper app</text>
+  <text x="385" y="286" fill="#e8ecf4" font-size="15" text-anchor="middle" font-weight="600">Projector</text>
+  <text x="385" y="232" fill="#8b95a8" font-size="11" text-anchor="middle">built-in server + renderer</text>
+  <!-- beam -->
+  <path d="M456 150 L600 40 L600 280 L456 170 Z" fill="#7c5cff" opacity=".18"/>
+  <!-- house -->
+  <path d="M600 110 L690 50 L780 110 Z" fill="#ff7a18"/>
+  <path d="M606 110 H774 V270 H606 Z" fill="#1d4ed8"/>
+  <rect x="625" y="135" width="44" height="40" fill="#000" stroke="#ffd166" stroke-width="4"/>
+  <rect x="711" y="135" width="44" height="40" fill="#000"/>
+  <circle cx="724" cy="155" r="3" fill="#ffdd00"/><circle cx="740" cy="155" r="3" fill="#ffdd00"/>
+  <rect x="670" y="200" width="40" height="70" fill="#000" stroke="#ff2020" stroke-width="3" stroke-dasharray="4 4"/>
+  <text x="690" y="292" fill="#e8ecf4" font-size="15" text-anchor="middle" font-weight="600">Your wall / house</text>
+</svg>

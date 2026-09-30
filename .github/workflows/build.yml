@@ -1,0 +1,72 @@
+name: Build & test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Tests (unit + browser end-to-end)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - run: npm run test:e2e
+
+  apk:
+    name: Android TV app (APK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build APK + desktop server jar
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease :server:jar
+          mkdir -p ../dist
+          cp app/build/outputs/apk/release/app-release.apk ../dist/projection-mapper.apk
+          cp server/build/libs/server.jar ../dist/projection-mapper-server.jar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: projection-mapper
+          path: dist/
+
+  release:
+    name: Publish "latest" release
+    needs: [test, apk]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: projection-mapper
+          path: dist
+      - name: Replace the "latest" release with this build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete latest --cleanup-tag -y || true
+          gh release create latest dist/projection-mapper.apk dist/projection-mapper-server.jar \
+            --target "$GITHUB_SHA" --prerelease=false \
+            --title "Latest build (${GITHUB_REF_NAME} @ ${GITHUB_SHA::7})" \
+            --notes "Install **projection-mapper.apk** on your Google TV / Android TV projector. See the README for step-by-step install instructions. Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA}."

@@ -1,0 +1,9 @@
+node_modules/
+data/
+*.log
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+test-results/

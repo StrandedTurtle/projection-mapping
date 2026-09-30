@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b0d12">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Projection Mapper</title>
+<link rel="icon" href="img/icon.svg">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="css/controller.css">
+</head>
+<body>
+<header class="top">
+  <div class="status" id="status" title="Connection"><span class="dot"></span><span id="statusText">Connecting…</span></div>
+  <div class="top-actions">
+    <button class="icon-btn" id="undoBtn" aria-label="Undo" title="Undo"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
+    <button class="icon-btn" id="redoBtn" aria-label="Redo" title="Redo"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg></button>
+    <button class="icon-btn toggle" id="outlineBtn" aria-label="Show outlines on projector" title="Edit mode: outlines on projector"><svg viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 14h7v7h-7z" stroke-dasharray="2 2"/><path d="M10 6.5h4M17.5 10v4"/></svg></button>
+    <button class="icon-btn danger toggle" id="blackoutBtn" aria-label="Blackout" title="Blackout"><svg viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg></button>
+  </div>
+</header>
+
+<div class="layout">
+  <section class="stage-col">
+    <div class="stage-wrap" id="stageWrap">
+      <div class="stage" id="stage">
+        <canvas id="preview"></canvas>
+        <canvas id="handles"></canvas>
+        <canvas id="loupe" class="loupe"></canvas>
+        <div class="stage-empty" id="stageEmpty">
+          <p>Tap <b>+ Rectangle</b> below, then drag the corners until the shape lines up with a wall, window or object.</p>
+        </div>
+      </div>
+    </div>
+    <div class="banner" id="banner" hidden></div>
+
+    <div class="context" id="context" hidden>
+      <div class="ctx-row">
+        <div class="ctx-title"><span class="swatch" id="ctxSwatch"></span><span id="ctxName">Shape</span><span class="ctx-sub" id="ctxSub"></span></div>
+        <button class="chip" id="deselectBtn">Done</button>
+      </div>
+      <div class="ctx-row nudge-row">
+        <div class="nudge">
+          <button class="nb up" data-dx="0" data-dy="-1" aria-label="Up">▲</button>
+          <button class="nb left" data-dx="-1" data-dy="0" aria-label="Left">◀</button>
+          <button class="nb right" data-dx="1" data-dy="0" aria-label="Right">▶</button>
+          <button class="nb down" data-dx="0" data-dy="1" aria-label="Down">▼</button>
+          <button class="nb mid" id="cyclePointBtn" aria-label="Next corner" title="Next corner">⟳</button>
+        </div>
+        <div class="ctx-tools">
+          <div class="ctx-line">
+            <div class="seg small" id="stepSeg">
+              <button data-step="1">1px</button><button data-step="5" class="on">5px</button><button data-step="25">25px</button>
+            </div>
+            <label class="check"><input type="checkbox" id="fineToggle"> Fine drag</label>
+          </div>
+          <div class="tool-grid" id="shapeTools">
+            <button data-tool="shrink" title="Smaller">－</button>
+            <button data-tool="grow" title="Bigger">＋</button>
+            <button data-tool="rotL" title="Rotate left">⟲</button>
+            <button data-tool="rotR" title="Rotate right">⟳</button>
+            <button data-tool="flipH" title="Flip horizontally">⇋</button>
+            <button data-tool="flipV" title="Flip vertically">⇵</button>
+          </div>
+          <div class="tool-grid" id="pointTools">
+            <button data-tool="addPoint" title="Add a corner after this one">＋ corner</button>
+            <button data-tool="delPoint" title="Remove this corner">－ corner</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel-col">
+    <nav class="tabs" id="tabs">
+      <button data-tab="shapes" class="on">Shapes</button>
+      <button data-tab="look">Look</button>
+      <button data-tab="scenes">Scenes</button>
+      <button data-tab="setup">Projector</button>
+    </nav>
+
+    <div class="panel" id="panel-shapes">
+      <div class="add-row">
+        <button class="add" data-add="rect"><svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/></svg>Rectangle</button>
+        <button class="add" data-add="triangle"><svg viewBox="0 0 24 24"><path d="M12 4 21 19H3z"/></svg>Triangle</button>
+        <button class="add" data-add="circle"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>Circle</button>
+        <button class="add" data-add="poly"><svg viewBox="0 0 24 24"><path d="M12 3l8 5v8l-8 5-8-5V8z"/></svg>Free shape</button>
+      </div>
+      <ul class="shape-list" id="shapeList"></ul>
+      <div class="shape-actions" id="shapeActions" hidden>
+        <button id="renameBtn">Rename</button>
+        <button id="dupBtn">Duplicate</button>
+        <button id="convertBtn">To free shape</button>
+        <button id="deleteBtn" class="danger">Delete</button>
+      </div>
+      <p class="tip">Tip: drag a corner and watch the crosshair on the wall. Use the arrow pad for pixel-perfect edges. Free shapes: tap the small ＋ between corners to add more.</p>
+    </div>
+
+    <div class="panel" id="panel-look" hidden>
+      <div class="target-row">
+        <span>Apply to</span>
+        <div class="seg" id="targetSeg"><button data-target="one" class="on" id="targetOne">Selected</button><button data-target="all">All shapes</button></div>
+      </div>
+      <div class="look-empty" id="lookEmpty" hidden>Select a shape on the preview (or choose “All shapes”).</div>
+      <div id="lookBody">
+        <div class="seg wide" id="kindSeg">
+          <button data-kind="effect" class="on">Effects</button><button data-kind="image">Image</button><button data-kind="video">Video</button>
+        </div>
+        <div id="effectSection">
+          <div class="chips" id="tagChips"></div>
+          <div class="fx-grid-wrap" id="fxGridWrap">
+            <canvas id="fxCanvas"></canvas>
+            <div class="fx-grid" id="fxGrid"></div>
+          </div>
+          <div class="params" id="params"></div>
+        </div>
+        <div id="mediaSection" hidden>
+          <label class="upload">
+            <input type="file" id="fileInput" accept="image/*,video/*">
+            <span id="uploadLabel">⬆ Upload from phone</span>
+          </label>
+          <div class="progress" id="uploadProgress" hidden><div></div></div>
+          <div class="media-grid" id="mediaGrid"></div>
+          <div class="field"><span>Fit</span><div class="seg" id="fitSeg"><button data-fit="stretch">Stretch</button><button data-fit="cover">Fill</button><button data-fit="contain">Fit</button></div></div>
+          <div class="field"><span>Tint</span><input type="color" id="tintInput" value="#ffffff"></div>
+        </div>
+        <h3>Surface</h3>
+        <div class="params" id="surfaceParams"></div>
+        <button class="wide-btn" id="copyAllBtn">Copy this look to all shapes</button>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-scenes" hidden>
+      <h3>Themes <small>re-skin every shape in one tap</small></h3>
+      <div class="theme-grid" id="themeGrid"></div>
+      <h3>My scenes</h3>
+      <button class="wide-btn" id="saveSceneBtn">＋ Save current look as a scene</button>
+      <ul class="scene-list" id="sceneList"></ul>
+      <h3>Slideshow</h3>
+      <label class="switch-row"><span>Cycle through ticked scenes</span><input type="checkbox" id="playToggle" class="switch"></label>
+      <div class="field"><span>Every</span><input type="range" id="playInterval" min="5" max="300" step="5"><output id="playIntervalOut"></output></div>
+    </div>
+
+    <div class="panel" id="panel-setup" hidden>
+      <div class="field"><span>Brightness</span><input type="range" id="brightness" min="0" max="1" step="0.01"><output id="brightnessOut"></output></div>
+      <label class="switch-row"><span>Blackout</span><input type="checkbox" id="blackoutToggle" class="switch"></label>
+      <label class="switch-row"><span>Show outlines on projector (edit mode)</span><input type="checkbox" id="outlineToggle" class="switch"></label>
+      <label class="switch-row"><span>Alignment grid</span><input type="checkbox" id="gridToggle" class="switch"></label>
+      <label class="switch-row"><span>Show connect QR code on projector</span><input type="checkbox" id="qrToggle" class="switch"></label>
+      <label class="switch-row"><span>Live effect preview on this phone</span><input type="checkbox" id="previewToggle" class="switch"></label>
+      <div class="field"><span>Background</span><input type="color" id="bgInput"></div>
+      <button class="wide-btn" id="identifyBtn">Flash shape names on projector</button>
+      <h3>Backup</h3>
+      <div class="btn-row">
+        <button id="exportBtn">Export</button>
+        <label class="btn-like"><input type="file" id="importInput" accept="application/json,.json" hidden>Import</label>
+        <button id="resetBtn" class="danger">Reset all</button>
+      </div>
+      <p class="tip" id="aboutText">Projection Mapper — free &amp; open. Your project is saved on the projector automatically.</p>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+<script type="module" src="js/controller/main.js"></script>
+</body>
+</html>
