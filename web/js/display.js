@@ -2,7 +2,7 @@
 // code so a phone can connect, and applies edits streamed from the phone(s).
 
 import { Renderer } from './engine/renderer.js';
-import { centroid } from './engine/geometry.js';
+import { centroid, shapeOutline, visibleOutline } from './engine/geometry.js';
 import { Link } from './net.js';
 import { applyOp, normalizeState, defaultState } from './state.js';
 
@@ -134,6 +134,7 @@ const linkHandlers = {
         overlayDirty = true;
         break;
       case 'identify': identifyUntil = performance.now() + 4000; overlayDirty = true; break;
+      case 'audio': onAudio(msg); break;
       default: break;
     }
   },
@@ -210,6 +211,7 @@ function drawOverlay(now) {
     state.shapes.forEach((s, i) => {
       if (!s.visible && s.id !== selection.id) return;
       const pts = s.points.map(([x, y]) => [x * W, y * H]);
+      const outline = shapeOutline(s).map(([x, y]) => [x * W, y * H]);
       const sel = s.id === selection.id;
       const col = OUTLINE_COLORS[i % OUTLINE_COLORS.length];
       octx.save();
@@ -219,13 +221,13 @@ function drawOverlay(now) {
       octx.setLineDash(s.visible ? [] : [6 * u, 6 * u]);
       octx.beginPath();
       if (s.mask === 'ellipse' && s.type === 'quad') {
-        // show the quad frame faintly and the ellipse strongly
+        // show the frame faintly and the ellipse strongly
         octx.globalAlpha = 0.35;
-        pts.forEach((p, k) => (k ? octx.lineTo(p[0], p[1]) : octx.moveTo(p[0], p[1])));
+        outline.forEach((p, k) => (k ? octx.lineTo(p[0], p[1]) : octx.moveTo(p[0], p[1])));
         octx.closePath(); octx.stroke(); octx.globalAlpha = 1;
         octx.beginPath();
       }
-      pts.forEach((p, k) => (k ? octx.lineTo(p[0], p[1]) : octx.moveTo(p[0], p[1])));
+      visibleOutline(s).forEach(([x, y], k) => (k ? octx.lineTo(x * W, y * H) : octx.moveTo(x * W, y * H)));
       octx.closePath();
       octx.stroke();
       if (sel) {
@@ -354,8 +356,33 @@ function trackPerformance(now) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Sound from the phone's microphone. Levels rise instantly and fall smoothly;
+// if the phone stops sending (screen off, mic off) everything returns to normal.
+const sound = { target: { l: 0, b: 0, m: 0, h: 0 }, lastMsg: 0, lastBeat: -1, last: 0 };
+function onAudio(msg) {
+  sound.target = { l: +msg.l || 0, b: +msg.b || 0, m: +msg.m || 0, h: +msg.h || 0 };
+  sound.lastMsg = performance.now();
+  if (renderer && typeof msg.beat === 'number' && msg.beat !== sound.lastBeat) {
+    if (sound.lastBeat >= 0) { renderer.audio.beats++; renderer.audio.beatAge = 0; }
+    sound.lastBeat = msg.beat;
+  }
+}
+function stepAudio(now) {
+  if (!renderer) return;
+  const a = renderer.audio;
+  const dt = sound.last ? Math.min(0.1, (now - sound.last) / 1000) : 0;
+  sound.last = now;
+  a.active = now - sound.lastMsg < 1500;
+  a.beatAge += dt;
+  const t = a.active ? sound.target : { l: 0, b: 0, m: 0, h: 0 };
+  const follow = (cur, tgt) => (tgt > cur ? tgt : cur + (tgt - cur) * Math.min(1, dt * 8));
+  a.level = follow(a.level, t.l); a.bass = follow(a.bass, t.b); a.mid = follow(a.mid, t.m); a.high = follow(a.high, t.h);
+}
+
 function frame(now) {
   trackPerformance(now);
+  stepAudio(now);
   stepFade(now);
   if (renderer) renderer.render(now);
   drawOverlay(now);

@@ -15,6 +15,8 @@
 // minRes keeps effects with fine detail (eyes, sparkles) from getting blurry.
 // Helpers: hash, hash2, noise, fbm, hsv2rgb, rot, ramp3, P(uv) isotropic coords.
 
+import { PACK_EFFECTS } from './effects-packs.js';
+
 export const PARAMS = {
   c1: { label: 'Color 1', type: 'color' },
   c2: { label: 'Color 2', type: 'color' },
@@ -25,7 +27,7 @@ export const PARAMS = {
   angle: { label: 'Direction', type: 'range', min: 0, max: 360, step: 5 },
 };
 
-export const EFFECTS = [
+const BASE_EFFECTS = [
   {
     id: 'solid', name: 'Solid', tags: ['basic'],
     params: ['c1'], defaults: { c1: '#ffffff' },
@@ -389,6 +391,7 @@ export const EFFECTS = [
   },
 ];
 
+export const EFFECTS = [...BASE_EFFECTS, ...PACK_EFFECTS];
 export const EFFECT_MAP = Object.fromEntries(EFFECTS.map((e) => [e.id, e]));
 
 export function effectDefaults(id) {

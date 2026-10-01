@@ -9,6 +9,9 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { chromium, devices } from 'playwright';
 import { startServer, SERVERS } from './harness.mjs';
+import { THEMES } from '../../web/js/state.js';
+
+const themeEffects = (name, n) => THEMES.find((t) => t.name === name).looks.slice(0, n).map((l) => l.effect).join();
 
 const LAUNCH = { args: ['--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] };
 if (fs.existsSync('/opt/pw-browsers/chromium') && !process.env.PLAYWRIGHT_BROWSERS_PATH) LAUNCH.executablePath = '/opt/pw-browsers/chromium';
@@ -148,13 +151,13 @@ for (const kind of SERVERS) {
       await phone.click('[data-add=circle]');
       await phone.click('[data-tab=scenes]');
       await phone.click('#themeGrid button:has-text("Christmas")');
-      await until(async () => (await tvState()).shapes.map((x) => x.content.effect).join() === 'stripes,snow,chase', 3000, 'theme');
+      await until(async () => (await tvState()).shapes.map((x) => x.content.effect).join() === themeEffects('Christmas', 3), 3000, 'theme');
 
       const phone2 = await phoneCtx.newPage();
       await phone2.goto(srv.base + '/');
       await phone2.waitForFunction(() => window.__pm.synced === true);
       const s2 = await phone2.evaluate(() => window.__pm.state.shapes.map((x) => x.content.effect).join());
-      assert.equal(s2, 'stripes,snow,chase');
+      assert.equal(s2, themeEffects('Christmas', 3));
       assert.match(await phone.textContent('#statusText'), /2 phones/);
       await phone2.close();
     });
@@ -163,9 +166,9 @@ for (const kind of SERVERS) {
       await phone.click('#saveSceneBtn');
       await until(async () => (await tvState()).scenes.length === 1, 2000, 'scene saved');
       await phone.click('#themeGrid button:has-text("Party")');
-      await until(async () => (await tvState()).shapes[0].content.effect === 'rainbow', 2000, 'party');
+      await until(async () => (await tvState()).shapes[0].content.effect === themeEffects('Party', 1), 2000, 'party');
       await phone.click('#sceneList button[title="Show now"]');
-      await until(async () => (await tvState()).shapes[0].content.effect === 'stripes', 2000, 'scene restored');
+      await until(async () => (await tvState()).shapes[0].content.effect === themeEffects('Christmas', 1), 2000, 'scene restored');
       assert.equal((await tvState()).scenes[0].name, 'Spooky');
     });
 

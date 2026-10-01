@@ -18,6 +18,7 @@
   <div class="top-actions">
     <button class="icon-btn" id="undoBtn" aria-label="Undo" title="Undo"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
     <button class="icon-btn" id="redoBtn" aria-label="Redo" title="Redo"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg></button>
+    <button class="icon-btn toggle" id="micBtn" aria-label="Sound mode" title="Sound: shapes react to music"><span class="mic-level" id="micLevel"></span><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
     <button class="icon-btn toggle" id="outlineBtn" aria-label="Show outlines on projector" title="Edit mode: outlines on projector"><svg viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 14h7v7h-7z" stroke-dasharray="2 2"/><path d="M10 6.5h4M17.5 10v4"/></svg></button>
     <button class="icon-btn danger toggle" id="blackoutBtn" aria-label="Blackout" title="Blackout"><svg viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg></button>
   </div>
@@ -65,6 +66,10 @@
             <button data-tool="flipH" title="Flip horizontally">⇋</button>
             <button data-tool="flipV" title="Flip vertically">⇵</button>
           </div>
+          <div class="tool-grid" id="bendTools">
+            <button data-tool="bend" id="bendBtn" title="Drag the diamonds to curve the edges">⌒ Bend</button>
+            <button data-tool="straighten" title="Make the edges straight again">Straighten</button>
+          </div>
           <div class="tool-grid" id="pointTools">
             <button data-tool="addPoint" title="Add a corner after this one">＋ corner</button>
             <button data-tool="delPoint" title="Remove this corner">－ corner</button>
@@ -107,7 +112,7 @@
       <div class="look-empty" id="lookEmpty" hidden>Select a shape on the preview (or choose “All shapes”).</div>
       <div id="lookBody">
         <div class="seg wide" id="kindSeg">
-          <button data-kind="effect" class="on">Effects</button><button data-kind="image">Image</button><button data-kind="video">Video</button>
+          <button data-kind="effect" class="on">Effects</button><button data-kind="image">Image</button><button data-kind="video">Video</button><button data-kind="text">Text</button>
         </div>
         <div id="effectSection">
           <div class="chips" id="tagChips"></div>
@@ -117,6 +122,7 @@
           </div>
           <div class="params" id="params"></div>
         </div>
+        <div id="textSection" hidden></div>
         <div id="mediaSection" hidden>
           <label class="upload">
             <input type="file" id="fileInput" accept="image/*,video/*">
@@ -136,6 +142,16 @@
     <div class="panel" id="panel-scenes" hidden>
       <h3>Themes <small>re-skin every shape in one tap</small></h3>
       <div class="theme-grid" id="themeGrid"></div>
+      <h3>Sequence <small>light your shapes up in turn</small></h3>
+      <label class="switch-row"><span>Run a sequence</span><input type="checkbox" id="seqToggle" class="switch"></label>
+      <div id="seqBody">
+        <div class="chips wrap" id="seqModes"></div>
+        <div class="field"><span>Order</span><select id="seqOrder"></select></div>
+        <div class="field"><span>Speed</span><input type="range" id="seqSpeed" min="0.2" max="12" step="0.1"><output id="seqSpeedOut"></output></div>
+        <div class="field"><span>Smoothness</span><input type="range" id="seqSmooth" min="0" max="1" step="0.01"><output id="seqSmoothOut"></output></div>
+        <div class="field"><span>Off level</span><input type="range" id="seqDim" min="0" max="0.8" step="0.01"><output id="seqDimOut"></output></div>
+        <p class="tip" id="seqHint"></p>
+      </div>
       <h3>My scenes</h3>
       <button class="wide-btn" id="saveSceneBtn">＋ Save current look as a scene</button>
       <ul class="scene-list" id="sceneList"></ul>
@@ -145,6 +161,15 @@
     </div>
 
     <div class="panel" id="panel-setup" hidden>
+      <h3>Sound <small>make shapes dance to music</small></h3>
+      <div class="sound-card">
+        <button class="wide-btn first" id="micStart">🎤 Listen to music</button>
+        <div class="meters"><div><i id="mB"></i><span>Bass</span></div><div><i id="mM"></i><span>Mid</span></div><div><i id="mH"></i><span>Treble</span></div><div><i id="mL"></i><span>Level</span></div></div>
+        <div class="field"><span>Sensitivity</span><input type="range" id="micSens" min="0.5" max="3" step="0.05" value="1"><output id="micSensOut">1</output></div>
+        <button class="wide-btn" id="reactAll">Make every shape react</button>
+        <p class="tip" id="micHint">Put the phone near the speaker and keep this screen open. Each shape's reaction is set on its Look tab.</p>
+      </div>
+      <h3>Output</h3>
       <div class="field"><span>Brightness</span><input type="range" id="brightness" min="0" max="1" step="0.01"><output id="brightnessOut"></output></div>
       <label class="switch-row"><span>Blackout</span><input type="checkbox" id="blackoutToggle" class="switch"></label>
       <label class="switch-row"><span>Show outlines on projector (edit mode)</span><input type="checkbox" id="outlineToggle" class="switch"></label>

@@ -73,3 +73,42 @@ test('shape aspect', () => {
   close(shapeAspect('quad', [[0, 0], [200, 0], [200, 100], [0, 100]]), 2);
   close(shapeAspect('poly', [[0, 0], [100, 0], [50, 200]]), 0.5);
 });
+
+import { shapeMesh, shapeOutline, bendHandle, bendTo, hasCurves, quadPoint, visibleOutline, bakeOutline } from '../../web/js/engine/geometry.js';
+
+test('straight quad mesh reproduces the perspective mapping exactly at vertices', () => {
+  const s = { type: 'quad', points: [[0.1, 0.1], [0.6, 0.15], [0.55, 0.7], [0.12, 0.6]], curves: null };
+  const H = squareToQuad(...s.points);
+  const m = shapeMesh(s, 8);
+  assert.equal(m.pos.length, 81);
+  assert.equal(m.idx.length, 8 * 8 * 6);
+  m.uv.forEach(([u, v], i) => { const [x, y] = applyH(H, u, v); close(m.pos[i][0], x); close(m.pos[i][1], y); });
+  assert.equal(hasCurves(s), false);
+  assert.deepEqual(shapeOutline(s), s.points);
+});
+
+test('bending an edge moves only that edge, and the handle follows the finger', () => {
+  const s = { type: 'quad', points: [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]], curves: null };
+  s.curves = bendTo(s, 0, [0.5, 0.05]);
+  assert.equal(hasCurves(s), true);
+  const [hx, hy] = bendHandle(s, 0);
+  close(hx, 0.5); close(hy, 0.05);
+  // corners never move
+  const H = squareToQuad(...s.points);
+  const c = quadPoint(s.points, H, s.curves, 1, 1);
+  close(c[0], 0.8); close(c[1], 0.8);
+  // the opposite (bottom) edge stays straight
+  const b = quadPoint(s.points, H, s.curves, 0.5, 1);
+  close(b[1], 0.8);
+  const out = shapeOutline(s, 8);
+  assert.equal(out.length, 32);
+  assert.ok(Math.min(...out.map((p) => p[1])) < 0.06, 'outline bulges up to the handle');
+  assert.equal(bakeOutline(s, 6).length, 24);
+});
+
+test('ellipse outline is round, not the quad', () => {
+  const s = { type: 'quad', mask: 'ellipse', points: [[0, 0], [1, 0], [1, 1], [0, 1]] };
+  const o = visibleOutline(s, 40);
+  assert.equal(o.length, 40);
+  for (const [x, y] of o) close(Math.hypot(x - 0.5, y - 0.5), 0.5, 1e-9);
+});

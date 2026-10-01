@@ -5,6 +5,7 @@
 
 import { effectDefaults, EFFECT_MAP } from './engine/effects.js';
 import { centroid } from './engine/geometry.js';
+import { defaultSequence } from './engine/sequence.js';
 
 export const STATE_VERSION = 1;
 
@@ -34,6 +35,7 @@ export function defaultState() {
     shapes: [],
     scenes: [],
     playlist: { enabled: false, sceneIds: [], interval: 30 },
+    sequence: defaultSequence(),
     global: defaultGlobal(),
   };
 }
@@ -45,6 +47,15 @@ export function makeContent(effect = 'solid', overrides = {}) {
     ...effectDefaults(effect),
     media: '',
     fit: 'stretch', // 'stretch' | 'cover' | 'contain'
+    // text
+    text: '',
+    font: 'sans',
+    textMode: 'scroll', // 'scroll' | 'static'
+    size: 0.6,
+    textBg: true,
+    // sound reaction (needs the phone's microphone turned on)
+    react: 0, // 0 = off .. 1 = full
+    reactMode: 'pulse', // 'pulse' | 'beat' | 'speed'
     ...overrides,
   };
 }
@@ -162,6 +173,9 @@ export function applyOp(state, op) {
     case 'setPlaylist':
       state.playlist = { ...state.playlist, ...clone(op.patch) };
       return true;
+    case 'setSequence':
+      state.sequence = { ...defaultSequence(), ...state.sequence, ...clone(op.patch) };
+      return true;
     case 'replace': {
       const next = normalizeState(op.state);
       for (const k of Object.keys(state)) delete state[k];
@@ -178,6 +192,7 @@ export function applyOp(state, op) {
  * id (plus a fallback list); themes are just a list cycled across shapes.
  */
 function applyLooks(state, scene) {
+  if (scene.sequence) state.sequence = { ...defaultSequence(), ...clone(scene.sequence) };
   const list = scene.looks || [];
   const byId = scene.byId || {};
   state.shapes.forEach((s, i) => {
@@ -193,7 +208,7 @@ function applyLooks(state, scene) {
 export function captureScene(state, name) {
   const byId = {};
   for (const s of state.shapes) byId[s.id] = { ...clone(s.content), opacity: s.opacity, feather: s.feather };
-  return { id: uid('c'), name, byId, looks: state.shapes.map((s) => byId[s.id]) };
+  return { id: uid('c'), name, byId, looks: state.shapes.map((s) => byId[s.id]), sequence: clone(state.sequence) };
 }
 
 export function normalizeState(input) {
@@ -205,13 +220,14 @@ export function normalizeState(input) {
     ...s,
     global: { ...base.global, ...(s.global || {}) },
     playlist: { ...base.playlist, ...(s.playlist || {}) },
+    sequence: { ...base.sequence, ...(s.sequence || {}) },
     scenes: Array.isArray(s.scenes) ? s.scenes : [],
     shapes: Array.isArray(s.shapes) ? s.shapes : [],
   };
   out.shapes = out.shapes
     .filter((sh) => sh && Array.isArray(sh.points) && sh.points.length >= 3)
     .map((sh) => ({
-      visible: true, locked: false, opacity: 1, feather: 0, mask: 'none', type: 'poly', kind: 'poly', name: 'Shape',
+      visible: true, locked: false, opacity: 1, feather: 0, mask: 'none', type: 'poly', kind: 'poly', name: 'Shape', curves: null,
       ...sh,
       id: sh.id || uid('s'),
       content: { ...makeContent((sh.content && sh.content.effect) || 'solid'), ...(sh.content || {}) },
@@ -230,32 +246,91 @@ export const THEMES = [
   {
     id: 'halloween', name: 'Halloween', emoji: '🎃',
     looks: [
+      L('pumpkin'),
+      L('ghosts'),
       L('fire'),
+      L('bats'),
       L('eyes'),
-      L('plasma', { c1: '#ff6a00', c2: '#6a00ff', c3: '#1a0033', speed: 0.6 }),
+      L('stainedglass', { c1: '#ff6a00', c2: '#5a189a', c3: '#2b9348' }),
       L('lightning'),
-      L('pulse', { c1: '#ff6a00', c2: '#2a0040', speed: 0.7 }),
-      L('clouds', { c1: '#7cff4f', c2: '#12001f', speed: 0.4 }),
+    ],
+  },
+  {
+    id: 'haunted', name: 'Haunted House', emoji: '👻',
+    looks: [
+      L('bricks', { c1: '#4a4a52', c2: '#9a9a9a' }),
+      L('ghosts', { c2: '#0a0014' }),
+      L('eyes', { amount: 0.6 }),
+      L('lightning'),
+      L('noise', { c1: '#9fffb0' }),
     ],
   },
   {
     id: 'christmas', name: 'Christmas', emoji: '🎄',
     looks: [
-      L('stripes', { c1: '#e60000', c2: '#ffffff', speed: 0.5 }),
+      L('stainedglass', { c1: '#c1121f', c2: '#2b9348', c3: '#f2b705' }),
       L('snow'),
       L('chase', { c1: '#ff1a1a', c2: '#1aff4a', c3: '#000000' }),
+      L('cozywindow'),
+      L('stripes', { c1: '#e60000', c2: '#ffffff', speed: 0.5 }),
       L('sparkle', { c1: '#ffd166', c2: '#062b12' }),
-      L('cycle', { c1: '#e60000', c2: '#00a651', c3: '#ffffff', speed: 0.6 }),
+    ],
+  },
+  {
+    id: 'newyear', name: 'New Year', emoji: '🎆',
+    looks: [
+      L('fireworks'),
+      L('confetti'),
+      L('sparkle', { c1: '#ffd700', c2: '#000000', amount: 0.8 }),
+      L('searchlights', { c1: '#fff3c4' }),
     ],
   },
   {
     id: 'party', name: 'Party', emoji: '🪩',
     looks: [
       L('rainbow', { speed: 1.5 }),
+      L('equalizer'),
       L('cycle', { c1: '#ff00c8', c2: '#00e5ff', c3: '#fff200', speed: 2, amount: 1 }),
-      L('spiral', { c1: '#ff00c8', c2: '#1a0033', speed: 1.5 }),
+      L('bassrings'),
+      L('pixelwave'),
       L('checker', { c1: '#00e5ff', c2: '#ff00c8', speed: 1.5 }),
-      L('dots', { c1: '#fff200', c2: '#1a0033', speed: 1.5 }),
+    ],
+  },
+  {
+    id: 'trippy', name: 'Trippy', emoji: '🌀',
+    looks: [
+      L('kaleidoscope'),
+      L('tunnel'),
+      L('morph'),
+      L('liquid', { c1: '#14001f', c2: '#ff4ecd', c3: '#00f5d4' }),
+    ],
+  },
+  {
+    id: 'space', name: 'Space', emoji: '🌌',
+    looks: [
+      L('starfield'),
+      L('aurora'),
+      L('tunnel', { c1: '#4cc9f0', c2: '#14001f' }),
+      L('sparkle', { c1: '#ffffff', c2: '#000010', amount: 0.3 }),
+    ],
+  },
+  {
+    id: 'neon', name: 'Neon City', emoji: '🌃',
+    looks: [
+      L('neongrid'),
+      L('network', { c1: '#ff4ecd' }),
+      L('glow', { c1: '#00e5ff' }),
+      L('rainwindow'),
+      L('sweep', { c1: '#ff00c8', speed: 0.8 }),
+    ],
+  },
+  {
+    id: 'autumn', name: 'Autumn', emoji: '🍂',
+    looks: [
+      L('leaves'),
+      L('cozywindow'),
+      L('fire', { amount: 0.3 }),
+      L('fireflies'),
     ],
   },
   {
@@ -264,8 +339,8 @@ export const THEMES = [
       L('water'),
       L('gradient', { c1: '#0f2027', c2: '#2c5364', c3: '#6a82fb', speed: 0.3 }),
       L('lava'),
-      L('clouds'),
-      L('ripple', { speed: 0.5 }),
+      L('waterfall'),
+      L('fireflies'),
     ],
   },
   {
@@ -278,9 +353,11 @@ export const THEMES = [
   {
     id: 'outline', name: 'Architecture', emoji: '🏛️',
     looks: [
+      L('bevel'),
       L('glow', { c1: '#ffffff' }),
+      L('searchlights'),
+      L('network'),
       L('sweep', { c1: '#ffffff', speed: 0.6 }),
-      L('glow', { c1: '#00e5ff' }),
     ],
   },
   {

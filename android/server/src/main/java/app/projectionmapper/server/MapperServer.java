@@ -1,6 +1,7 @@
 package app.projectionmapper.server;
 
 import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -18,8 +19,14 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyFactory;
+import java.security.KeyStore;
 import java.security.MessageDigest;
+import java.security.PrivateKey;
 import java.security.SecureRandom;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -36,6 +43,9 @@ import java.util.concurrent.ThreadFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+
 /**
  * Tiny dependency-free HTTP + WebSocket server. It is a line-by-line port of
  * server/server.js so the same web app works with either:
@@ -48,6 +58,10 @@ import java.util.regex.Pattern;
  *   DELETE /api/media/NAME delete a file
  *   GET  /media/NAME       serve uploads (with Range support for video)
  *   GET  /ws?role=...      WebSocket relay between projector and phones
+ *
+ * The same routes are also served over https (default port 8443) with a fixed
+ * self-signed certificate: phone browsers only allow the microphone (sound-
+ * reactive mode) on secure pages.
  */
 public final class MapperServer {
 
@@ -57,7 +71,7 @@ public final class MapperServer {
         byte[] read(String path) throws IOException;
     }
 
-    public static final String VERSION = "1.0.0";
+    public static final String VERSION = "1.1.0";
     private static final long MAX_STATE = 5L * 1024 * 1024;
     private static final long MAX_MEDIA = 1024L * 1024 * 1024;
     private static final String WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -91,6 +105,9 @@ public final class MapperServer {
     private final File mediaDir;
     private final File stateFile;
     private final int requestedPort;
+    private final int requestedHttpsPort;
+    private volatile ServerSocket tlsSocket;
+    private int httpsPort;
     private final ExecutorService pool;
     private final Set<WsClient> clients = Collections.newSetFromMap(new ConcurrentHashMap<WsClient, Boolean>());
     private final SecureRandom random = new SecureRandom();
@@ -99,6 +116,11 @@ public final class MapperServer {
     private int port;
 
     public MapperServer(WebRoot web, File dataDir, int port) {
+        this(web, dataDir, port, port == 8080 ? 8443 : (port == 0 ? 0 : port + 1));
+    }
+
+    public MapperServer(WebRoot web, File dataDir, int port, int httpsPort) {
+        this.requestedHttpsPort = httpsPort;
         this.web = web;
         this.dataDir = dataDir;
         this.mediaDir = new File(dataDir, "media");
@@ -140,10 +162,86 @@ public final class MapperServer {
         }
         if (serverSocket == null) throw last != null ? last : new IOException("could not bind");
         running = true;
-        Thread acceptor = new Thread(this::acceptLoop, "mapper-accept");
-        acceptor.setDaemon(true);
-        acceptor.start();
+        // Bind https before answering anything, so /api/info is right from the first request.
+        try {
+            startTls();
+        } catch (Exception e) {
+            httpsPort = 0; // sound mode unavailable, everything else works
+            System.err.println("https disabled: " + e);
+        }
+        startAcceptor(serverSocket, "mapper-accept");
         return port;
+    }
+
+    public int getHttpsPort() {
+        return httpsPort;
+    }
+
+    private void startAcceptor(final ServerSocket ss, String name) {
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                acceptLoop(ss);
+            }
+        }, name);
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void startTls() throws Exception {
+        SSLContext ctx = SSLContext.getInstance("TLS");
+        ctx.init(keyManagers(), null, null);
+        IOException last = null;
+        int first = requestedHttpsPort;
+        for (int p = first; p < first + 10; p++) {
+            try {
+                ServerSocket ss = ctx.getServerSocketFactory().createServerSocket();
+                ss.setReuseAddress(true);
+                ss.bind(new InetSocketAddress(p));
+                tlsSocket = ss;
+                httpsPort = ss.getLocalPort();
+                startAcceptor(ss, "mapper-accept-tls");
+                return;
+            } catch (IOException e) {
+                last = e;
+                if (first == 0) break;
+            }
+        }
+        throw last != null ? last : new IOException("could not bind https");
+    }
+
+    /** Key managers for the bundled self-signed certificate (tls/*.pem). */
+    private static javax.net.ssl.KeyManager[] keyManagers() throws Exception {
+        byte[] keyDer = pemBody(resource("tls/key.pem"));
+        PrivateKey key = KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(keyDer));
+        Certificate cert = CertificateFactory.getInstance("X.509")
+                .generateCertificate(new ByteArrayInputStream(resource("tls/cert.pem").getBytes(StandardCharsets.US_ASCII)));
+        KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+        ks.load(null, null);
+        char[] pw = "projectionmapper".toCharArray();
+        ks.setKeyEntry("mapper", key, pw, new Certificate[]{cert});
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(ks, pw);
+        return kmf.getKeyManagers();
+    }
+
+    private static String resource(String name) throws IOException {
+        InputStream in = MapperServer.class.getResourceAsStream(name);
+        if (in == null) throw new IOException("missing resource " + name);
+        try {
+            return new String(readAll(in), StandardCharsets.US_ASCII);
+        } finally {
+            in.close();
+        }
+    }
+
+    static byte[] pemBody(String pem) {
+        StringBuilder b64 = new StringBuilder();
+        for (String line : pem.split("\\r?\\n")) {
+            if (line.startsWith("-----") || line.trim().isEmpty()) continue;
+            b64.append(line.trim());
+        }
+        return base64Decode(b64.toString());
     }
 
     public int getPort() {
@@ -156,15 +254,19 @@ public final class MapperServer {
             if (serverSocket != null) serverSocket.close();
         } catch (IOException ignored) {
         }
+        try {
+            if (tlsSocket != null) tlsSocket.close();
+        } catch (IOException ignored) {
+        }
         for (WsClient c : clients) c.close();
         clients.clear();
         pool.shutdownNow();
     }
 
-    private void acceptLoop() {
+    private void acceptLoop(ServerSocket listener) {
         while (running) {
             try {
-                final Socket s = serverSocket.accept();
+                final Socket s = listener.accept();
                 pool.execute(() -> handleConnection(s));
             } catch (IOException e) {
                 if (!running) return;
@@ -268,7 +370,7 @@ public final class MapperServer {
             }
             ips.append(']');
             sendJson(out, 200, "{\"app\":\"projection-mapper\",\"version\":\"" + VERSION + "\",\"port\":" + port
-                    + ",\"ips\":" + ips + ",\"server\":\"java\"}");
+                    + ",\"httpsPort\":" + httpsPort + ",\"ips\":" + ips + ",\"server\":\"java\"}");
             return;
         }
         if (p.equals("/api/state")) {
@@ -637,6 +739,25 @@ public final class MapperServer {
     // --------------------------------------------------------------- helpers
 
     private static final char[] B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
+
+    static byte[] base64Decode(String s) {
+        int[] rev = new int[128];
+        java.util.Arrays.fill(rev, -1);
+        for (int i = 0; i < B64.length; i++) rev[B64[i]] = i;
+        ByteArrayOutputStream out = new ByteArrayOutputStream(s.length() * 3 / 4);
+        int buf = 0, bits = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '=' || c >= 128 || rev[c] < 0) continue;
+            buf = (buf << 6) | rev[c];
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out.write((buf >> bits) & 0xff);
+            }
+        }
+        return out.toByteArray();
+    }
 
     /** Base64 without java.util.Base64 (unavailable before Android 8). */
     static String base64(byte[] data) {

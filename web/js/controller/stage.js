@@ -3,7 +3,7 @@
 
 import { app } from './app.js';
 import { Renderer } from '../engine/renderer.js';
-import { pointInPolygon } from '../engine/geometry.js';
+import { pointInPolygon, shapeOutline, visibleOutline, bendHandle, bendTo } from '../engine/geometry.js';
 
 const HANDLE_R = 26; // touch radius in CSS px
 
@@ -24,7 +24,7 @@ export function initStage() {
     console.warn('No WebGL preview on this phone:', e);
   }
 
-  const view = { previewOn: true, fine: false };
+  const view = { previewOn: true, fine: false, bend: false };
   let drag = null;
   let pending = null;
 
@@ -63,18 +63,29 @@ export function initStage() {
     }
     return best;
   }
+  const canBend = (s) => view.bend && s.type === 'quad' && s.points.length === 4 && s.mask !== 'ellipse';
+  function hitBend(shape, p) {
+    if (!canBend(shape)) return -1;
+    let best = -1, bd = HANDLE_R * 0.9;
+    for (let i = 0; i < 4; i++) {
+      const [x, y] = bendHandle(shape, i);
+      const d = Math.hypot(x * p.w - p.x, y * p.h - p.y);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
   function hitShape(p) {
     const nx = p.x / p.w, ny = p.y / p.h;
     const shapes = app.state.shapes;
     const sel = app.selected();
-    if (sel && pointInPolygon(nx, ny, sel.points)) return sel; // prefer the selected one
+    if (sel && pointInPolygon(nx, ny, shapeOutline(sel))) return sel; // prefer the selected one
     for (let i = shapes.length - 1; i >= 0; i--) {
       const s = shapes[i];
-      if (s.visible && pointInPolygon(nx, ny, s.points)) return s;
+      if (s.visible && pointInPolygon(nx, ny, shapeOutline(s))) return s;
     }
     for (let i = shapes.length - 1; i >= 0; i--) {
       const s = shapes[i];
-      if (!s.visible && pointInPolygon(nx, ny, s.points)) return s;
+      if (!s.visible && pointInPolygon(nx, ny, shapeOutline(s))) return s;
     }
     return null;
   }
@@ -85,6 +96,11 @@ export function initStage() {
     const p = toLocal(e);
     const sel = app.selected();
     if (sel && !sel.locked) {
+      const bi = hitBend(sel, p);
+      if (bi >= 0) {
+        startDrag(e, p, sel, 'bend', bi);
+        return;
+      }
       const hi = hitHandle(sel, p);
       if (hi >= 0) {
         startDrag(e, p, sel, 'point', hi);
@@ -116,6 +132,8 @@ export function initStage() {
     drag = {
       pointerId: e.pointerId, mode, id: shape.id, index, start: p, last: p,
       orig: shape.points.map((q) => q.slice()), moved: false, saved: alreadySaved,
+      origShape: { ...shape, points: shape.points.map((q) => q.slice()), curves: shape.curves ? shape.curves.map((c) => c && c.slice()) : null },
+      handle: mode === 'bend' ? bendHandle(shape, index) : null,
     };
     app.gesture = true;
   }
@@ -131,6 +149,11 @@ export function initStage() {
       drag.moved = true;
       if (!drag.saved) app.checkpoint();
     }
+    if (drag.mode === 'bend') {
+      const target = [drag.handle[0] + dx, drag.handle[1] + dy];
+      pending = { id: drag.id, patch: { curves: bendTo(drag.origShape, drag.index, target) } };
+      return;
+    }
     let pts;
     if (drag.mode === 'point') {
       pts = drag.orig.map((q) => q.slice());
@@ -138,7 +161,7 @@ export function initStage() {
     } else {
       pts = drag.orig.map(([x, y]) => [x + dx, y + dy]);
     }
-    pending = { id: drag.id, points: pts };
+    pending = { id: drag.id, patch: { points: pts } };
   });
 
   function endDrag(e) {
@@ -155,7 +178,7 @@ export function initStage() {
 
   function flush() {
     if (!pending) return;
-    app.commit({ type: 'updateShape', id: pending.id, patch: { points: pending.points } }, { undo: false, quiet: true });
+    app.commit({ type: 'updateShape', id: pending.id, patch: pending.patch }, { undo: false, quiet: true });
     pending = null;
   }
 
@@ -169,7 +192,7 @@ export function initStage() {
     hctx.clearRect(0, 0, r.width, r.height);
     const sel = app.selected();
     for (const s of app.state.shapes) {
-      const pts = s.points.map(([x, y]) => [x * r.width, y * r.height]);
+      const pts = visibleOutline(s).map(([x, y]) => [x * r.width, y * r.height]);
       hctx.beginPath();
       pts.forEach((p, i) => (i ? hctx.lineTo(p[0], p[1]) : hctx.moveTo(p[0], p[1])));
       hctx.closePath();
@@ -196,6 +219,18 @@ export function initStage() {
           hctx.beginPath(); hctx.moveTo(mx - 3.5, my); hctx.lineTo(mx + 3.5, my); hctx.moveTo(mx, my - 3.5); hctx.lineTo(mx, my + 3.5); hctx.stroke();
         }
       }
+      if (!sel.locked && canBend(sel)) {
+        for (let i = 0; i < 4; i++) {
+          const [hx, hy] = bendHandle(sel, i);
+          const x = hx * r.width, y = hy * r.height, on = drag && drag.mode === 'bend' && drag.index === i;
+          hctx.save();
+          hctx.translate(x, y); hctx.rotate(Math.PI / 4);
+          hctx.fillStyle = on ? '#22d3ee' : 'rgba(20,20,30,.85)';
+          hctx.strokeStyle = '#22d3ee'; hctx.lineWidth = 2;
+          hctx.fillRect(-6, -6, 12, 12); hctx.strokeRect(-6, -6, 12, 12);
+          hctx.restore();
+        }
+      }
       if (!sel.locked) {
         pts.forEach(([x, y], i) => {
           const on = i === app.selection.point;
@@ -211,14 +246,15 @@ export function initStage() {
   }
 
   function drawLoupe() {
-    if (!drag || drag.mode !== 'point' || !drag.moved) { loupe.classList.remove('show'); return; }
+    if (!drag || (drag.mode !== 'point' && drag.mode !== 'bend') || !drag.moved) { loupe.classList.remove('show'); return; }
     const s = app.selected();
     if (!s || !s.points[drag.index]) return;
+    const focus = drag.mode === 'bend' ? bendHandle(s, drag.index) : s.points[drag.index];
     loupe.classList.add('show');
     loupe.classList.toggle('right', drag.last.x < drag.last.w / 2);
     const size = 120, dpr = Math.min(window.devicePixelRatio || 1, 2);
     if (loupe.width !== size * dpr) { loupe.width = size * dpr; loupe.height = size * dpr; }
-    const [nx, ny] = s.points[drag.index];
+    const [nx, ny] = focus;
     const zoom = 3;
     lctx.setTransform(1, 0, 0, 1, 0, 0);
     lctx.fillStyle = '#000';
@@ -246,6 +282,8 @@ export function initStage() {
     render,
     setPreview(on) { view.previewOn = on; },
     setFine(on) { view.fine = on; },
+    setBend(on) { view.bend = on; },
+    get bend() { return view.bend; },
     renderer,
   };
 }

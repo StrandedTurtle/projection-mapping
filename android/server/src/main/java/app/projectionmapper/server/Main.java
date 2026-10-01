@@ -16,6 +16,7 @@ public final class Main {
         String webDir = arg(args, "web", "web");
         String dataDir = arg(args, "data", "data");
         int port = Integer.parseInt(arg(args, "port", "8080"));
+        int httpsPort = Integer.parseInt(arg(args, "https-port", port == 8080 ? "8443" : String.valueOf(port + 1)));
         final File root = new File(webDir).getCanonicalFile();
         MapperServer server = new MapperServer(new MapperServer.WebRoot() {
             @Override
@@ -26,11 +27,12 @@ public final class Main {
                     return MapperServer.readAll(in);
                 }
             }
-        }, new File(dataDir), port);
+        }, new File(dataDir), port, httpsPort);
         int bound = server.start();
         List<String> ips = MapperServer.lanAddresses();
         String host = ips.isEmpty() ? "localhost" : ips.get(0);
-        System.out.println("Projection Mapper (java) on http://" + host + ":" + bound + "/  (projector: /display.html)");
+        System.out.println("Projection Mapper (java) on http://" + host + ":" + bound + "/  (projector: /display.html)"
+                + (server.getHttpsPort() > 0 ? "  secure: https://" + host + ":" + server.getHttpsPort() + "/" : ""));
         Thread.currentThread().join();
     }
 

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const JAVA_SRC = path.join(ROOT, 'android/server/src/main/java');
+const JAVA_RES = path.join(ROOT, 'android/server/src/main/resources');
 
 export function freePort() {
   return new Promise((resolve) => {
@@ -32,14 +33,15 @@ export function hasJava() {
 
 export async function startServer(kind) {
   const port = await freePort();
+  const httpsPort = await freePort();
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-data-'));
   const web = path.join(ROOT, 'web');
   let proc;
   if (kind === 'java') {
     const cp = compileJava();
-    proc = spawn('java', ['-cp', cp, 'app.projectionmapper.server.Main', '--web', web, '--data', data, '--port', String(port)], { stdio: 'pipe' });
+    proc = spawn('java', ['-cp', cp + path.delimiter + JAVA_RES, 'app.projectionmapper.server.Main', '--web', web, '--data', data, '--port', String(port), '--https-port', String(httpsPort)], { stdio: 'pipe' });
   } else {
-    proc = spawn(process.execPath, [path.join(ROOT, 'server/server.js'), '--web', web, '--data', data, '--port', String(port)], { stdio: 'pipe' });
+    proc = spawn(process.execPath, [path.join(ROOT, 'server/server.js'), '--web', web, '--data', data, '--port', String(port), '--https-port', String(httpsPort)], { stdio: 'pipe' });
   }
   let log = '';
   proc.stdout.on('data', (d) => { log += d; });
@@ -50,8 +52,9 @@ export async function startServer(kind) {
     await new Promise((r) => setTimeout(r, 100));
     if (i === 99) throw new Error(`${kind} server did not start:\n${log}`);
   }
+  const info = await (await fetch(base + '/api/info')).json();
   return {
-    kind, port, base, data,
+    kind, port, base, data, httpsPort: info.httpsPort, secureBase: `https://127.0.0.1:${info.httpsPort}`,
     get log() { return log; },
     async stop() {
       proc.kill();

@@ -5,8 +5,9 @@ import {
   createShape, makeContent, captureScene, clone, uid, THEMES, defaultState, normalizeState,
 } from '../state.js';
 import { EFFECTS, EFFECT_MAP, PARAMS, effectDefaults, paramLabel } from '../engine/effects.js';
-import { Renderer } from '../engine/renderer.js';
-import { centroid } from '../engine/geometry.js';
+import { Renderer, TEXT_FONTS } from '../engine/renderer.js';
+import { SEQ_MODES, SEQ_ORDERS } from '../engine/sequence.js';
+import { centroid, hasCurves, bendHandle, bendTo, bakeOutline } from '../engine/geometry.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -53,6 +54,7 @@ export function toast(msg) {
 function describe(shape) {
   const c = shape.content || {};
   if ((c.kind === 'image' || c.kind === 'video') && c.media) return c.kind === 'video' ? 'Video' : 'Image';
+  if (c.kind === 'text' && c.text) return `Text: “${c.text.slice(0, 24)}${c.text.length > 24 ? '…' : ''}”`;
   return (EFFECT_MAP[c.effect] || EFFECT_MAP.solid).name;
 }
 function swatchColor(shape) {
@@ -160,7 +162,7 @@ export function initPanels(stage) {
   $('convertBtn').onclick = () => {
     const s = app.selected(); if (!s) return;
     if (s.type === 'quad') {
-      app.commit({ type: 'updateShape', id: s.id, patch: { type: 'poly', kind: 'poly', mask: 'none' } });
+      app.commit({ type: 'updateShape', id: s.id, patch: { type: 'poly', kind: 'poly', mask: 'none', points: bakeOutline(s), curves: null } });
       toast('Now a free shape: tap ＋ between corners to add more');
     } else if (s.points.length === 4) {
       app.commit({ type: 'updateShape', id: s.id, patch: { type: 'quad', kind: 'rect' } });
@@ -217,8 +219,15 @@ export function initPanels(stage) {
     const a = app.aspect;
     const pts = s.points.map(([x, y]) => [x * a, y]);
     const [cx, cy] = centroid(pts);
-    const out = pts.map(([x, y]) => fn(x - cx, y - cy)).map(([x, y]) => [(x + cx) / a, y + cy]);
-    app.commit({ type: 'updateShape', id: s.id, patch: { points: out } }, { key: 'xf:' + s.id, quiet: true });
+    const map = ([x, y]) => { const [X, Y] = fn(x * a - cx, y - cy); return [(X + cx) / a, Y + cy]; };
+    const patch = { points: s.points.map(map) };
+    if (hasCurves(s)) {
+      // Move the bend handles with the shape so curves rotate/scale/mirror too.
+      let next = { ...s, points: patch.points, curves: null };
+      for (let i = 0; i < 4; i++) next = { ...next, curves: bendTo(next, i, map(bendHandle(s, i))) };
+      patch.curves = next.curves;
+    }
+    app.commit({ type: 'updateShape', id: s.id, patch }, { key: 'xf:' + s.id, quiet: true });
   }
   const rot = (deg) => (x, y) => {
     const r = (deg * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r);
@@ -231,6 +240,15 @@ export function initPanels(stage) {
     rotR: () => transform(rot(2)),
     flipH: () => transform((x, y) => [-x, y]),
     flipV: () => transform((x, y) => [x, -y]),
+    bend: () => {
+      stage.setBend(!stage.bend);
+      $('bendBtn').classList.toggle('on', stage.bend);
+      if (stage.bend) toast('Drag the blue diamonds to curve each edge');
+    },
+    straighten: () => {
+      const s = app.selected(); if (!s || s.locked) return;
+      app.commit({ type: 'updateShape', id: s.id, patch: { curves: null } });
+    },
     addPoint: () => {
       const s = app.selected(); if (!s || s.locked) return;
       const pts = s.points.map((p) => p.slice());
@@ -238,7 +256,7 @@ export function initPanels(stage) {
       const a = pts[i], b = pts[(i + 1) % pts.length];
       pts.splice(i + 1, 0, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
       const patch = { points: pts };
-      if (s.type === 'quad') Object.assign(patch, { type: 'poly', kind: 'poly', mask: 'none' });
+      if (s.type === 'quad') Object.assign(patch, { type: 'poly', kind: 'poly', mask: 'none', curves: null });
       app.commit({ type: 'updateShape', id: s.id, patch });
       app.select(s.id, i + 1);
     },
@@ -248,7 +266,7 @@ export function initPanels(stage) {
       const i = app.selection.point >= 0 ? app.selection.point : s.points.length - 1;
       const pts = s.points.filter((_, k) => k !== i);
       const patch = { points: pts };
-      if (s.type === 'quad') Object.assign(patch, { type: 'poly', kind: 'poly', mask: 'none' });
+      if (s.type === 'quad') Object.assign(patch, { type: 'poly', kind: 'poly', mask: 'none', curves: null });
       app.commit({ type: 'updateShape', id: s.id, patch });
       app.select(s.id, Math.min(i, pts.length - 1));
     },
@@ -264,6 +282,8 @@ export function initPanels(stage) {
     const pi = app.selection.point;
     $('ctxSub').textContent = s.locked ? 'locked' : pi >= 0 ? `corner ${pi + 1} of ${s.points.length}` : 'whole shape';
     $('pointTools').hidden = s.mask === 'ellipse' || s.locked;
+    $('bendTools').hidden = s.type !== 'quad' || s.mask === 'ellipse' || s.locked;
+    $('bendBtn').classList.toggle('on', stage.bend);
   }
 
   // ---------------- look panel ----------------
@@ -292,12 +312,42 @@ export function initPanels(stage) {
 
   $('kindSeg').addEventListener('click', (e) => {
     const b = e.target.closest('button'); if (!b) return;
-    setContent({ kind: b.dataset.kind });
+    const patch = { kind: b.dataset.kind };
+    const src = lookSource();
+    if (b.dataset.kind === 'text' && src && !src.content.text) Object.assign(patch, { text: 'Happy Halloween!', c1: '#ffffff', c2: '#000000' });
+    setContent(patch);
   });
 
+  // ---- text ----
+  function renderText(c) {
+    const box = $('textSection');
+    box.textContent = '';
+    const ta = h('textarea', { rows: '2', maxlength: '200', placeholder: 'Type your message…' });
+    ta.value = c.text || '';
+    ta.addEventListener('input', () => setContent({ text: ta.value }, { key: 'text', quiet: true }));
+    const fonts = h('div', { class: 'seg wide' }, ...Object.entries(TEXT_FONTS).map(([id, f]) => h('button', {
+      class: (c.font || 'sans') === id ? 'on' : '', onclick: () => setContent({ font: id }),
+    }, f.name)));
+    const mode = h('div', { class: 'seg' }, ...[['scroll', 'Scrolling'], ['static', 'Still']].map(([id, label]) => h('button', {
+      class: (c.textMode || 'scroll') === id ? 'on' : '', onclick: () => setContent({ textMode: id }),
+    }, label)));
+    const bg = h('input', { type: 'checkbox', class: 'switch' });
+    bg.checked = c.textBg !== false;
+    bg.addEventListener('change', () => setContent({ textBg: bg.checked }));
+    box.append(
+      ta, fonts,
+      h('div', { class: 'field' }, h('span', {}, 'Motion'), mode),
+      rangeField('Text size', c.size == null ? 0.6 : c.size, { min: 0.15, max: 1, step: 0.01 }, (v) => setContent({ size: v }, { key: 'tsize', quiet: true }), '%'),
+      rangeField('Scroll speed', c.speed == null ? 1 : c.speed, { min: 0, max: 4, step: 0.05 }, (v) => setContent({ speed: v }, { key: 'tspeed', quiet: true })),
+      colorField('Text colour', c.c1 || '#ffffff', (v, live) => setContent({ c1: v }, { key: 'c:c1', quiet: live })),
+      h('label', { class: 'switch-row' }, h('span', {}, 'Background box'), bg),
+    );
+    if (c.textBg !== false) box.append(colorField('Box colour', c.c2 || '#000000', (v, live) => setContent({ c2: v }, { key: 'c:c2', quiet: live })));
+  }
+
   // Tag filter chips.
-  const TAGS = [['all', 'All'], ['basic', 'Basic'], ['calm', 'Calm'], ['party', 'Party'], ['halloween', 'Halloween'],
-    ['christmas', 'Christmas'], ['architecture', 'Outline']];
+  const TAGS = [['all', 'All'], ['halloween', 'Halloween'], ['christmas', 'Christmas'], ['party', 'Party'], ['trippy', 'Trippy'],
+    ['architecture', 'Building'], ['calm', 'Calm'], ['nature', 'Nature'], ['sound', '🎤 Sound'], ['basic', 'Basic']];
   $('tagChips').append(...TAGS.map(([id, label]) => h('button', {
     class: 'chip', 'data-tag': id,
     onclick: () => { tagFilter = id; renderFxGrid(); },
@@ -391,6 +441,18 @@ export function initPanels(stage) {
       (v) => setSurface({ opacity: v }, { key: 'opacity', quiet: true }), '%'));
     box.appendChild(rangeField('Soft edge', src.feather || 0, { min: 0, max: 1, step: 0.01 },
       (v) => setSurface({ feather: v }, { key: 'feather', quiet: true }), '%'));
+    box.appendChild(rangeField('React to sound', src.content.react || 0, { min: 0, max: 1, step: 0.01 },
+      (v) => setContent({ react: v }, { key: 'react', quiet: true }), '%'));
+    box.appendChild(h('div', { class: 'field' }, h('span', {}, 'Reaction'), h('div', { class: 'seg' },
+      ...[['pulse', 'Pulse'], ['beat', 'Beat flash'], ['speed', 'Speed']].map(([id, label]) => h('button', {
+        class: (src.content.reactMode || 'pulse') === id ? 'on' : '', onclick: () => setContent({ reactMode: id }),
+      }, label)))));
+    if (app.state.sequence && app.state.sequence.enabled) {
+      const sq = h('input', { type: 'checkbox', class: 'switch' });
+      sq.checked = src.inSequence !== false;
+      sq.addEventListener('change', () => setSurface({ inSequence: sq.checked }));
+      box.appendChild(h('label', { class: 'switch-row' }, h('span', {}, 'In sequence'), sq));
+    }
     if (src.type === 'quad') {
       const cb = h('input', { type: 'checkbox', class: 'switch' });
       cb.checked = src.mask === 'ellipse';
@@ -477,10 +539,12 @@ export function initPanels(stage) {
     const kind = c.kind || 'effect';
     segSet($('kindSeg'), 'kind', kind);
     $('effectSection').hidden = kind !== 'effect';
-    $('mediaSection').hidden = kind === 'effect';
+    $('mediaSection').hidden = kind !== 'image' && kind !== 'video';
+    $('textSection').hidden = kind !== 'text';
     $('uploadLabel').textContent = kind === 'video' ? '⬆ Upload a video from your phone' : '⬆ Upload a photo from your phone';
     $('fileInput').accept = kind === 'video' ? 'video/*' : 'image/*';
-    if (kind === 'effect') { renderFxGrid(); renderParams(); } else { renderMedia(); segSet($('fitSeg'), 'fit', c.fit || 'stretch'); $('tintInput').value = c.tint || '#ffffff'; }
+    if (kind === 'text') renderText(c);
+    else if (kind === 'effect') { renderFxGrid(); renderParams(); } else { renderMedia(); segSet($('fitSeg'), 'fit', c.fit || 'stretch'); $('tintInput').value = c.tint || '#ffffff'; }
     renderSurface();
   }
 
@@ -522,10 +586,41 @@ export function initPanels(stage) {
         h('button', { class: 'mini', title: 'Delete scene', html: ICONS.trash, onclick: () => { if (confirm(`Delete scene “${sc.name}”?`)) app.commit({ type: 'removeScene', id: sc.id }); } }),
       ));
     }
+    renderSequence();
     $('playToggle').checked = !!pl.enabled;
     $('playInterval').value = pl.interval || 30;
     $('playIntervalOut').textContent = fmtNum(pl.interval || 30, 's');
   }
+  // ---- sequence ----
+  const setSeq = (patch, opts = {}) => app.commit({ type: 'setSequence', patch }, { key: 'seq:' + Object.keys(patch).join(), ...opts });
+  $('seqModes').append(...SEQ_MODES.map((m) => h('button', { class: 'chip', 'data-mode': m.id, onclick: () => setSeq({ mode: m.id, enabled: true }) }, m.name)));
+  $('seqOrder').append(...SEQ_ORDERS.map((o) => h('option', { value: o.id }, o.name)));
+  $('seqOrder').addEventListener('change', (e) => setSeq({ order: e.target.value }));
+  $('seqToggle').addEventListener('change', (e) => {
+    if (e.target.checked && app.state.shapes.length < 2) toast('Tip: sequences need at least 2 shapes');
+    setSeq({ enabled: e.target.checked });
+  });
+  for (const [id, key, fmt] of [['seqSpeed', 'speed', ''], ['seqSmooth', 'smooth', '%'], ['seqDim', 'dim', '%']]) {
+    $(id).addEventListener('input', (e) => {
+      $(id + 'Out').textContent = fmtNum(+e.target.value, fmt);
+      setSeq({ [key]: +e.target.value }, { quiet: true });
+    });
+  }
+  function renderSequence() {
+    const q = app.state.sequence || {};
+    $('seqToggle').checked = !!q.enabled;
+    $('seqBody').hidden = !q.enabled;
+    for (const c of $('seqModes').children) c.classList.toggle('on', c.dataset.mode === q.mode);
+    $('seqOrder').value = q.order || 'ltr';
+    $('seqSpeed').value = q.speed == null ? 2 : q.speed; $('seqSpeedOut').textContent = fmtNum(+$('seqSpeed').value);
+    $('seqSmooth').value = q.smooth == null ? 0.4 : q.smooth; $('seqSmoothOut').textContent = fmtNum(+$('seqSmooth').value, '%');
+    $('seqDim').value = q.dim || 0; $('seqDimOut').textContent = fmtNum(+$('seqDim').value, '%');
+    const mode = SEQ_MODES.find((m) => m.id === q.mode);
+    const n = app.state.shapes.filter((s) => s.visible && s.inSequence !== false).length;
+    $('seqHint').textContent = `${mode ? mode.hint + '. ' : ''}${n} shape${n === 1 ? '' : 's'} taking part — untick "In sequence" on a shape's Look tab to keep it always on.`
+      + (q.mode === 'beat' ? ' Turn on the microphone (🎤 at the top) so it can hear the beat.' : '');
+  }
+
   $('playToggle').addEventListener('change', (e) => {
     if (e.target.checked && !app.state.playlist.sceneIds.length) toast('Tick at least one saved scene');
     app.commit({ type: 'setPlaylist', patch: { enabled: e.target.checked } });

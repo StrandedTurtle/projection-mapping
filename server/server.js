@@ -6,11 +6,16 @@
 // uploaded images/videos (/api/media). The Android TV app embeds a Java port of
 // this exact same server, so either one works with the same web app.
 //
-//   node server/server.js [--port 8080] [--data ./data]
+//   node server/server.js [--port 8080] [--https-port 8443] [--data ./data]
+//
+// The https port exists only because phone browsers allow the microphone (for
+// sound-reactive mode) on secure pages only. It uses a fixed self-signed
+// certificate, so the phone shows a one-time "not private" warning.
 
 'use strict';
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -22,12 +27,14 @@ function arg(name, def) {
   return i >= 0 && args[i + 1] ? args[i + 1] : def;
 }
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const WEB_DIR = path.resolve(arg('web', path.join(__dirname, '..', 'web')));
 const DATA_DIR = path.resolve(arg('data', process.env.PM_DATA || path.join(__dirname, '..', 'data')));
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const PORT = parseInt(arg('port', process.env.PORT || '8080'), 10);
+const HTTPS_PORT = parseInt(arg('https-port', process.env.HTTPS_PORT || String(PORT === 8080 ? 8443 : PORT + 1)), 10);
+const TLS_DIR = path.join(__dirname, '..', 'android', 'server', 'src', 'main', 'resources', 'app', 'projectionmapper', 'server', 'tls');
 const MAX_STATE = 5 * 1024 * 1024;
 const MAX_MEDIA = 1024 * 1024 * 1024;
 
@@ -127,7 +134,7 @@ async function handle(req, res) {
   let p = decodeURIComponent(url.pathname);
 
   if (p === '/api/info') {
-    return send(res, 200, { app: 'projection-mapper', version: VERSION, port: PORT, ips: lanAddresses(), server: 'node' });
+    return send(res, 200, { app: 'projection-mapper', version: VERSION, port: PORT, httpsPort: secureServer ? HTTPS_PORT : 0, ips: lanAddresses(), server: 'node' });
   }
   if (p === '/api/state') {
     if (req.method === 'GET') {
@@ -178,12 +185,22 @@ async function handle(req, res) {
   serveFile(req, res, file);
 }
 
-const server = http.createServer((req, res) => {
+function onRequest(req, res) {
   handle(req, res).catch((err) => {
     console.error(err);
     if (!res.headersSent) send(res, 500, { error: String(err.message || err) });
   });
-});
+}
+const server = http.createServer(onRequest);
+let secureServer = null;
+try {
+  secureServer = https.createServer({
+    key: fs.readFileSync(path.join(TLS_DIR, 'key.pem')),
+    cert: fs.readFileSync(path.join(TLS_DIR, 'cert.pem')),
+  }, onRequest);
+} catch (e) {
+  console.warn('https disabled (certificate not found): sound mode will not be available', e.message);
+}
 
 // ---------------------------------------------------------------------------
 // Minimal WebSocket relay (RFC 6455). Every text message from one client is
@@ -218,7 +235,7 @@ function relay(from, text) {
   for (const c of clients) if (c !== from) c.socket.write(msg);
 }
 
-server.on('upgrade', (req, socket) => {
+function onUpgrade(req, socket) {
   const url = new URL(req.url, 'http://x');
   const key = req.headers['sec-websocket-key'];
   if (url.pathname !== '/ws' || !key) { socket.destroy(); return; }
@@ -272,7 +289,14 @@ server.on('upgrade', (req, socket) => {
   socket.on('close', drop);
   socket.on('end', drop);
   socket.on('error', drop);
-});
+}
+server.on('upgrade', onUpgrade);
+if (secureServer) {
+  secureServer.on('upgrade', onUpgrade);
+  secureServer.on('tlsClientError', () => {}); // phones probing the self-signed cert
+  secureServer.on('error', (e) => { console.warn('https server error:', e.message); secureServer = null; });
+  secureServer.listen(HTTPS_PORT, '0.0.0.0');
+}
 
 server.listen(PORT, '0.0.0.0', () => {
   const ips = lanAddresses();

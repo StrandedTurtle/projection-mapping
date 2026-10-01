@@ -16,7 +16,7 @@
 html, body { margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 body { min-height: 100vh; overscroll-behavior: none; }
-button, input, select { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 8px; font-weight: 600; }
@@ -28,11 +28,23 @@ h3 small { text-transform: none; letter-spacing: 0; font-weight: 400; margin-lef
   padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px 8px; background: rgba(11,13,18,.92); backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line); }
 .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); min-width: 0; }
+.status #statusText { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.icon-btn svg { position: relative; }
+.mic-level { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: rgba(34, 211, 238, .55); transition: height .05s linear; }
+#micBtn.on { background: #0e7490; border-color: #22d3ee; }
+#micBtn.attention { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(34, 211, 238, .35); border-color: #22d3ee; } }
+.sound-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; }
+.wide-btn.first { margin-top: 0; }
+.meters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 4px; }
+.meters div { height: 54px; border-radius: 8px; background: var(--card2); position: relative; overflow: hidden; }
+.meters i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: linear-gradient(#22d3ee, #7c5cff); }
+.meters span { position: absolute; left: 0; right: 0; bottom: 3px; text-align: center; font-size: 11px; color: #fff; text-shadow: 0 1px 2px #000; }
 .status .dot { width: 9px; height: 9px; border-radius: 50%; background: #f59e0b; flex: none; box-shadow: 0 0 0 3px rgba(245,158,11,.15); }
 .status.ok .dot { background: var(--ok); box-shadow: 0 0 0 3px rgba(52,211,153,.15); }
 .status.bad .dot { background: var(--danger); box-shadow: 0 0 0 3px rgba(255,77,94,.15); }
 .top-actions { display: flex; gap: 6px; }
-.icon-btn { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--card);
+.icon-btn { position: relative; overflow: hidden; width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--card);
   display: grid; place-items: center; padding: 0; }
 .icon-btn:disabled { opacity: .35; }
 .icon-btn.toggle.on { background: var(--accent); border-color: var(--accent); }
@@ -80,7 +92,8 @@ h3 small { text-transform: none; letter-spacing: 0; font-weight: 400; margin-lef
 .nb.right { grid-column: 3; grid-row: 2; } .nb.down { grid-column: 2; grid-row: 3; }
 .ctx-tools { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .tool-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
-#pointTools { grid-template-columns: 1fr 1fr; }
+#pointTools, #bendTools { grid-template-columns: 1fr 1fr; }
+#bendBtn.on { background: #0e7490; border-color: #22d3ee; }
 .ctx-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .tool-grid button { height: 34px; border-radius: 8px; border: 1px solid var(--line); background: var(--card2); font-size: 14px; padding: 0 4px; }
 .tool-grid button:active { background: var(--accent); }
@@ -96,6 +109,10 @@ h3 small { text-transform: none; letter-spacing: 0; font-weight: 400; margin-lef
 .chips { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px; scrollbar-width: none; }
 .chips::-webkit-scrollbar { display: none; }
 .chips .chip { flex: none; }
+.chips.wrap { flex-wrap: wrap; overflow: visible; }
+select { flex: 1; min-width: 0; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--card2); padding: 0 10px; }
+textarea, input[type=text] { width: 100%; border-radius: 10px; border: 1px solid var(--line); background: var(--card2); padding: 10px 12px; font-size: 16px; }
+textarea { resize: vertical; min-height: 64px; }
 .chips .chip.on { background: var(--text); color: var(--bg); border-color: var(--text); }
 
 /* ---- tabs & panels ---- */

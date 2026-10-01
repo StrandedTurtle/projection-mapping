@@ -189,3 +189,126 @@ export function toGL(m) {
 }
 
 export function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+// ---------------------------------------------------------------------------
+// Curved edges. A quad may bend each edge: curves[i] = [dx, dy] is how far the
+// middle of edge i (p_i -> p_i+1) is pushed out, in the same normalised units
+// as the points. Each edge becomes a quadratic Bezier through that point, and
+// the inside is blended with a Coons patch on top of the perspective mapping,
+// so a straight quad renders exactly as before.
+
+export function hasCurves(shape) {
+  return shape.type === 'quad' && shape.points.length === 4 && Array.isArray(shape.curves)
+    && shape.curves.some((c) => c && (Math.abs(c[0]) > 1e-6 || Math.abs(c[1]) > 1e-6));
+}
+
+/** Point on the (possibly curved, perspective) quad surface at uv. */
+export function quadPoint(pts, H, curves, u, v) {
+  let x, y;
+  if (H) [x, y] = applyH(H, u, v);
+  else { // bilinear fallback for degenerate quads
+    const [a, b, c, d] = pts;
+    x = (1 - u) * (1 - v) * a[0] + u * (1 - v) * b[0] + u * v * c[0] + (1 - u) * v * d[0];
+    y = (1 - u) * (1 - v) * a[1] + u * (1 - v) * b[1] + u * v * c[1] + (1 - u) * v * d[1];
+  }
+  if (curves) {
+    // Edge bulge 4s(1-s)*h (h = mid-point offset), blended across the patch.
+    const top = 4 * u * (1 - u), side = 4 * v * (1 - v);
+    const k = [(1 - v) * top, u * side, v * top, (1 - u) * side];
+    for (let i = 0; i < 4; i++) {
+      const c = curves[i];
+      if (c) { x += k[i] * c[0]; y += k[i] * c[1]; }
+    }
+  }
+  return [x, y];
+}
+
+function quadHomography(pts) {
+  return isConvex(pts) ? squareToQuad(pts[0], pts[1], pts[2], pts[3]) : null;
+}
+
+/** Closed outline polyline of a shape (normalised coords). */
+export function shapeOutline(shape, segs = 16) {
+  if (!hasCurves(shape)) return shape.points;
+  const H = quadHomography(shape.points);
+  const out = [];
+  const edgeUV = [(s) => [s, 0], (s) => [1, s], (s) => [1 - s, 1], (s) => [0, 1 - s]];
+  for (let e = 0; e < 4; e++) {
+    for (let i = 0; i < segs; i++) out.push(quadPoint(shape.points, H, shape.curves, ...edgeUV[e](i / segs)));
+  }
+  return out;
+}
+
+const EDGE_MID_UV = [[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]];
+
+/** Where the bend handle of edge i sits (normalised): on the curve itself. */
+export function bendHandle(shape, i) {
+  const H = quadHomography(shape.points);
+  return quadPoint(shape.points, H, hasCurves(shape) ? shape.curves : null, ...EDGE_MID_UV[i]);
+}
+
+/** New curves array after dragging the bend handle of edge i to `target`. */
+export function bendTo(shape, i, target) {
+  const H = quadHomography(shape.points);
+  const [x, y] = quadPoint(shape.points, H, null, ...EDGE_MID_UV[i]);
+  const curves = (shape.curves || [[0, 0], [0, 0], [0, 0], [0, 0]]).map((c) => (c ? c.slice() : [0, 0]));
+  curves[i] = [target[0] - x, target[1] - y];
+  return curves;
+}
+
+/**
+ * Triangle mesh for drawing a shape: pos (normalised xy), uv (0..1) and
+ * triangle indices. Quads are subdivided so perspective and curves are smooth;
+ * other polygons use their bounding box for uv.
+ */
+export function shapeMesh(shape, n = 12) {
+  const pts = shape.points;
+  if (shape.type === 'quad' && pts.length === 4) {
+    const H = quadHomography(pts);
+    if (H || hasCurves(shape)) {
+      const curves = hasCurves(shape) ? shape.curves : null;
+      const pos = [], uv = [], idx = [];
+      for (let j = 0; j <= n; j++) {
+        for (let i = 0; i <= n; i++) {
+          const u = i / n, v = j / n;
+          pos.push(quadPoint(pts, H, curves, u, v));
+          uv.push([u, v]);
+        }
+      }
+      for (let j = 0; j < n; j++) {
+        for (let i = 0; i < n; i++) {
+          const a = j * (n + 1) + i, b = a + 1, c = a + n + 1, d = c + 1;
+          idx.push(a, b, d, a, d, c);
+        }
+      }
+      return { pos, uv, idx };
+    }
+  }
+  const bb = bounds(pts);
+  const w = Math.max(bb.w, EPS), h = Math.max(bb.h, EPS);
+  return {
+    pos: pts,
+    uv: pts.map(([x, y]) => [(x - bb.minX) / w, (y - bb.minY) / h]),
+    idx: triangulate(pts),
+  };
+}
+
+/** Bake a curved quad into a free polygon (for "convert to free shape"). */
+export function bakeOutline(shape, segs = 6) {
+  return hasCurves(shape) ? shapeOutline(shape, segs) : shape.points.map((p) => p.slice());
+}
+
+/** Outline to draw for a shape: the ellipse for circle masks, else the edge. */
+export function visibleOutline(shape, segs = 48) {
+  if (shape.mask === 'ellipse' && shape.type === 'quad' && shape.points.length === 4) {
+    const H = quadHomography(shape.points);
+    const curves = hasCurves(shape) ? shape.curves : null;
+    const out = [];
+    for (let i = 0; i < segs; i++) {
+      const a = (i / segs) * Math.PI * 2;
+      out.push(quadPoint(shape.points, H, curves, 0.5 + 0.5 * Math.cos(a), 0.5 + 0.5 * Math.sin(a)));
+    }
+    return out;
+  }
+  return shapeOutline(shape);
+}

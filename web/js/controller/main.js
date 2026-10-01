@@ -1,15 +1,18 @@
 // Phone controller entry point.
 import { app } from './app.js';
 import { initStage } from './stage.js';
-import { initPanels } from './panels.js';
+import { initPanels, toast } from './panels.js';
+import { initSound } from './sound.js';
 
 const stage = initStage();
 const panels = initPanels(stage);
 app.connect();
+const sound = initSound({ toast, stage });
 
 function frame(now) {
   stage.render(now);
   panels.frame(now);
+  sound.frame(now);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

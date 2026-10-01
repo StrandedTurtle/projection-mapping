@@ -1,16 +1,21 @@
-// WebGL renderer: draws every surface (shape) with its effect / image / video,
-// warped with a true perspective homography. Used on the projector (full
-// resolution) and on the phone (small live preview).
+// WebGL renderer: draws every surface (shape) with its effect / image / video /
+// text. Shapes are drawn as meshes carrying a uv per vertex, so quads get true
+// perspective (finely subdivided) and can have curved edges. Used on the
+// projector (full resolution) and on the phone (small live preview).
 
 import { EFFECT_MAP, PRELUDE } from './effects.js';
-import { uvMatrix, triangulate, bounds, shapeAspect, toGL } from './geometry.js';
+import { bounds, shapeAspect, shapeMesh, shapeOutline } from './geometry.js';
+import { sequenceLevels } from './sequence.js';
 
 const MAXP = 64;
 
 const VS = `
 attribute vec2 a_pos;
+attribute vec2 a_uv;
 uniform vec2 u_res;
+varying vec2 v_uv;
 void main(){
+  v_uv = a_uv;
   vec2 c = a_pos / u_res * 2.0 - 1.0;
   gl_Position = vec4(c.x, -c.y, 0.0, 1.0);
 }`;
@@ -23,8 +28,10 @@ precision highp float;
 precision mediump float;
 #endif
 uniform vec2 u_res;
-uniform mat3 u_inv;
+varying vec2 v_uv;
 uniform float u_t;
+// Sound (from the phone's microphone): 0..1 levels, beat = flash on each beat.
+uniform float u_level; uniform float u_bass; uniform float u_mid; uniform float u_high; uniform float u_beat;
 uniform vec3 u_c1; uniform vec3 u_c2; uniform vec3 u_c3;
 uniform float u_scale; uniform float u_amount; uniform float u_angle;
 uniform float u_aspect; uniform float u_seed;
@@ -38,6 +45,8 @@ uniform float u_opacity;
 uniform float u_bright;
 uniform sampler2D u_tex;
 uniform vec4 u_texXf;
+uniform vec4 u_text;
+uniform float u_textBg;
 
 vec2 g_px; vec2 g_uv;
 
@@ -66,8 +75,7 @@ ${body}
 void main(){
   vec2 px = vec2(gl_FragCoord.x, u_res.y - gl_FragCoord.y);
   g_px = px;
-  vec3 h = u_inv * vec3(px, 1.0);
-  vec2 uv = h.xy / h.z;
+  vec2 uv = v_uv;
   g_uv = uv;
   float a = u_opacity;
   if (u_mask > 0.5) {
@@ -105,6 +113,28 @@ vec4 shade(vec2 uv){
   return vec4(c.rgb * u_c1, c.a);
 }`;
 
+// Text: a white-on-transparent strip of the message, tiled for scrolling.
+// u_text = (tile width in uv, text height in uv, offset, mode 1=scroll)
+const TEXT_BODY = `
+vec4 shade(vec2 uv){
+  float y = (uv.y - 0.5) / u_text.y + 0.5;
+  float x = u_text.w > 0.5 ? fract((uv.x + u_text.z) / u_text.x) : (uv.x - 0.5) / u_text.x + 0.5;
+  vec4 t = vec4(0.0);
+  if (y >= 0.0 && y <= 1.0 && x >= 0.0 && x <= 1.0) t = texture2D(u_tex, vec2(x, y));
+  // Letters are drawn white and take the text colour; emoji keep their colours.
+  float colourful = step(0.12, max(t.r, max(t.g, t.b)) - min(t.r, min(t.g, t.b)));
+  vec3 ink = mix(u_c1, t.rgb, colourful);
+  if (u_textBg > 0.5) return vec4(mix(u_c2, ink, t.a), 1.0);
+  return vec4(ink, t.a);
+}`;
+
+export const TEXT_FONTS = {
+  sans: { name: 'Bold', css: '800 {px}px system-ui, -apple-system, Roboto, "Segoe UI", sans-serif' },
+  serif: { name: 'Classic', css: '700 {px}px Georgia, "Times New Roman", serif' },
+  mono: { name: 'Digital', css: '700 {px}px "Courier New", monospace' },
+  script: { name: 'Script', css: 'italic 700 {px}px "Brush Script MT", "Dancing Script", cursive' },
+};
+
 const colorCache = new Map();
 export function hexToRGB(hex) {
   let c = colorCache.get(hex);
@@ -139,6 +169,9 @@ export class Renderer {
     this.fxScale = opts.fxScale == null ? 0.5 : opts.fxScale;
     this.resScale = 1;
     this.fbos = new Map();
+    this.texts = new Map();
+    this.audio = { level: 0, bass: 0, mid: 0, high: 0, beatAge: 9, beats: 0, active: false };
+    this.seqTime = 0;
     this.state = null;
     this.times = new Map();
     this.fade = 1;
@@ -159,8 +192,10 @@ export class Renderer {
     this.analyticAA = !gl.getContextAttributes().antialias;
     this.programs = new Map();
     this.buf = gl.createBuffer();
+    this.ibuf = gl.createBuffer();
     this.quadBuf = gl.createBuffer();
     this.fbos = new Map();
+    this.texts = new Map();
     for (const m of this.media.values()) m.tex = null;
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -188,6 +223,7 @@ export class Renderer {
     const gl = this.gl;
     let src;
     if (key === '__tex') src = fragSource(TEX_BODY);
+    else if (key === '__text') src = fragSource(TEXT_BODY);
     else if (key.startsWith('fbo:')) src = fboSource((EFFECT_MAP[key.slice(4)] || EFFECT_MAP.solid).glsl);
     else {
       const fx = EFFECT_MAP[key] || EFFECT_MAP.solid;
@@ -198,6 +234,7 @@ export class Renderer {
       gl.attachShader(prog, this._compile(gl.VERTEX_SHADER, VS));
       gl.attachShader(prog, this._compile(gl.FRAGMENT_SHADER, src));
       gl.bindAttribLocation(prog, 0, 'a_pos');
+      gl.bindAttribLocation(prog, 1, 'a_uv');
       gl.linkProgram(prog);
       if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
       const u = {};
@@ -224,6 +261,7 @@ export class Renderer {
       if (fx.heavy) this.program('fbo:' + id);
     }
     this.program('__tex');
+    this.program('__text');
   }
 
   resize() {
@@ -322,74 +360,128 @@ export class Renderer {
     gl.clear(gl.COLOR_BUFFER_BIT);
     if (master <= 0) return;
 
+    // Sequences light shapes up in turn (or on every beat in "beat" mode).
+    const seq = this.state.sequence;
+    let levels = null;
+    if (seq && seq.enabled) {
+      this.seqTime += dt * (seq.speed == null ? 2 : seq.speed);
+      const p = seq.mode === 'beat' ? this.audio.beats : this.seqTime;
+      levels = sequenceLevels(seq, this.state.shapes, p, this.audio.beatAge);
+    }
+
     for (const shape of this.state.shapes) {
       if (!shape.visible || !shape.points || shape.points.length < 3) continue;
       const c = shape.content || {};
+      const react = this._reaction(c);
       const speed = c.speed == null ? 1 : c.speed;
-      const t = (this.times.get(shape.id) || 0) + dt * speed;
+      const t = (this.times.get(shape.id) || 0) + dt * speed * react.speed;
       this.times.set(shape.id, t);
+      const k = (levels && levels.has(shape.id) ? levels.get(shape.id) : 1) * react.bright;
+      if (k <= 0.001) continue;
       try {
-        this._drawShape(shape, c, t, W, H, master);
+        this._drawShape(shape, c, t, W, H, master * k);
       } catch (err) {
         console.error('draw failed', err);
       }
     }
-    if (this.frames % 120 === 0) { this._gcMedia(now); this._gcFbos(now); }
+    if (this.frames % 120 === 0) { this._gcMedia(now); this._gcFbos(now); this._gcTexts(now); }
   }
 
-  _drawShape(shape, c, t, W, H, master) {
+  /** How a shape reacts to sound: brightness and speed multipliers. */
+  _reaction(c) {
+    const a = this.audio;
+    const amt = c.react || 0;
+    if (!amt || !a.active) return { bright: 1, speed: 1 };
+    const beat = Math.exp(-a.beatAge * 7);
+    switch (c.reactMode) {
+      case 'speed': return { bright: 1, speed: 1 + amt * 5 * a.level };
+      case 'beat': return { bright: 1 - amt + amt * (0.08 + 0.92 * beat), speed: 1 };
+      default: { // pulse with the music's energy (mostly bass)
+        const env = Math.min(1, Math.max(a.bass, a.level * 0.85));
+        return { bright: 1 - amt + amt * (0.1 + 0.9 * env), speed: 1 };
+      }
+    }
+  }
+
+  _drawShape(shape, c, t, W, H, bright) {
     const gl = this.gl;
-    const isMedia = (c.kind === 'image' || c.kind === 'video') && c.media;
-    let tex = null, mediaAspect = 1;
+    const kind = c.kind || 'effect';
+    const isMedia = (kind === 'image' || kind === 'video') && c.media;
+    const isText = kind === 'text' && c.text;
+    let tex = null, mediaAspect = 1, text = null;
     if (isMedia) {
-      const m = this._mediaEntry(c.media, c.kind);
+      const m = this._mediaEntry(c.media, kind);
       tex = this._textureFor(m);
       if (!tex) return; // still loading
       mediaAspect = m.h ? m.w / m.h : 1;
+    } else if (isText) {
+      text = this._textTexture(c);
+      tex = text && text.tex;
+      if (!tex) return;
     }
-    const pts = shape.points.slice(0, MAXP).map(([x, y]) => [x * W, y * H]);
-    const idx = triangulate(pts);
-    if (!idx.length) return;
-    const bb = bounds(pts);
+    const mesh = shapeMesh(shape);
+    if (!mesh.idx.length) return;
+    const pts = shape.points.map(([x, y]) => [x * W, y * H]);
+    const outline = shapeOutline(shape).slice(0, MAXP).map(([x, y]) => [x * W, y * H]);
+    const bb = bounds(outline);
     const aspect = shapeAspect(shape.type, pts);
     const seed = seedOf(shape.id);
     const fx = EFFECT_MAP[c.effect] || EFFECT_MAP.solid;
 
     // Heavy effects are computed into a small texture first (see fboSource).
     let offscreen = false;
-    if (!isMedia && fx.heavy && Math.max(this.fxScale, fx.minRes || 0) < 1) {
+    if (!isMedia && !isText && fx.heavy && Math.max(this.fxScale, fx.minRes || 0) < 1) {
       tex = this._effectTexture(shape, c, t, fx, pts, bb, aspect, seed);
       offscreen = !!tex;
     }
-    const p = this.program(isMedia || offscreen ? '__tex' : fx.id);
+    const p = this.program(isText ? '__text' : isMedia || offscreen ? '__tex' : fx.id);
     if (!p) return;
 
-    const verts = new Float32Array(idx.length * 2);
-    for (let i = 0; i < idx.length; i++) { verts[i * 2] = pts[idx[i]][0]; verts[i * 2 + 1] = pts[idx[i]][1]; }
+    // Interleaved [x, y, u, v] in pixels + an index buffer.
+    const nv = mesh.pos.length;
+    const verts = new Float32Array(nv * 4);
+    for (let i = 0; i < nv; i++) {
+      verts[i * 4] = mesh.pos[i][0] * W; verts[i * 4 + 1] = mesh.pos[i][1] * H;
+      verts[i * 4 + 2] = mesh.uv[i][0]; verts[i * 4 + 3] = mesh.uv[i][1];
+    }
     gl.useProgram(p.prog);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
     gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
     gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.ibuf);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(mesh.idx), gl.DYNAMIC_DRAW);
 
     const u = p.u;
     const set1 = (name, v) => { if (u[name]) gl.uniform1f(u[name], v); };
     if (u.u_res) gl.uniform2f(u.u_res, W, H);
-    if (u.u_inv) gl.uniformMatrix3fv(u.u_inv, false, toGL(uvMatrix(shape.type, pts)));
     this._fxUniforms(u, c, t, aspect, seed);
     if (isMedia) { if (u.u_c1) gl.uniform3fv(u.u_c1, hexToRGB(c.tint || '#ffffff')); }
     else if (offscreen) { if (u.u_c1) gl.uniform3f(u.u_c1, 1, 1, 1); }
-    set1('u_minDim', Math.max(1, Math.min(bb.w, bb.h)));
+    const minDim = Math.max(1, Math.min(bb.w, bb.h));
+    set1('u_minDim', minDim);
     set1('u_mask', shape.mask === 'ellipse' ? 1 : 0);
     set1('u_feather', (shape.feather || 0) * 0.5);
-    set1('u_aa', this.analyticAA ? 1.2 / Math.max(1, Math.min(bb.w, bb.h)) : 0);
+    set1('u_aa', this.analyticAA ? 1.2 / minDim : 0);
     set1('u_opacity', shape.opacity == null ? 1 : shape.opacity);
-    set1('u_bright', master);
-    if (u.u_np) gl.uniform1i(u.u_np, pts.length);
+    set1('u_bright', bright);
+    if (u.u_np) gl.uniform1i(u.u_np, outline.length);
     if (u.u_pts) {
       const flat = new Float32Array(MAXP * 2);
-      for (let i = 0; i < pts.length; i++) { flat[i * 2] = pts[i][0]; flat[i * 2 + 1] = pts[i][1]; }
+      for (let i = 0; i < outline.length; i++) { flat[i * 2] = outline[i][0]; flat[i * 2 + 1] = outline[i][1]; }
       gl.uniform2fv(u.u_pts, flat);
+    }
+    if (isText) {
+      // Text height as a fraction of the shape; static text shrinks to fit.
+      const ta = text.w / text.h;
+      let th = c.size == null ? 0.6 : c.size;
+      const scroll = (c.textMode || 'scroll') === 'scroll';
+      if (!scroll) th = Math.min(th, (aspect / ta) * 0.94);
+      const tile = (ta * th) / aspect;
+      if (u.u_text) gl.uniform4f(u.u_text, tile, th, scroll ? t * 0.25 : 0, scroll ? 1 : 0);
+      set1('u_textBg', c.textBg === false ? 0 : 1);
     }
     if (tex) {
       let sx = 1, sy = 1;
@@ -401,7 +493,7 @@ export class Renderer {
       gl.bindTexture(gl.TEXTURE_2D, tex);
       if (u.u_tex) gl.uniform1i(u.u_tex, 0);
     }
-    gl.drawArrays(gl.TRIANGLES, 0, idx.length);
+    gl.drawElements(gl.TRIANGLES, mesh.idx.length, gl.UNSIGNED_SHORT, 0);
   }
 
   _fxUniforms(u, c, t, aspect, seed) {
@@ -416,6 +508,55 @@ export class Renderer {
     set1('u_angle', ((c.angle || 0) * Math.PI) / 180);
     set1('u_aspect', aspect);
     set1('u_seed', seed);
+    const a = this.audio;
+    set1('u_level', a.active ? a.level : 0);
+    set1('u_bass', a.active ? a.bass : 0);
+    set1('u_mid', a.active ? a.mid : 0);
+    set1('u_high', a.active ? a.high : 0);
+    set1('u_beat', a.active ? Math.exp(-a.beatAge * 7) : 0);
+  }
+
+  /** White-on-transparent texture of a text message (cached). */
+  _textTexture(c) {
+    const font = TEXT_FONTS[c.font] ? c.font : 'sans';
+    const scroll = (c.textMode || 'scroll') === 'scroll';
+    const key = `${font}|${scroll ? 1 : 0}|${c.text}`;
+    let e = this.texts.get(key);
+    if (!e) {
+      const px = 128;
+      const cv = document.createElement('canvas');
+      const ctx = cv.getContext('2d');
+      const css = TEXT_FONTS[font].css.replace('{px}', px);
+      ctx.font = css;
+      const text = String(c.text).slice(0, 200);
+      let w = Math.ceil(ctx.measureText(text).width + (scroll ? px * 0.8 : px * 0.15));
+      const scale = Math.min(1, 4096 / Math.max(1, w));
+      w = Math.max(8, Math.floor(w * scale));
+      cv.width = w; cv.height = Math.ceil(px * 1.3 * scale);
+      ctx.font = TEXT_FONTS[font].css.replace('{px}', Math.floor(px * scale));
+      ctx.fillStyle = '#fff';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = scroll ? 'left' : 'center';
+      ctx.fillText(text, scroll ? 0 : w / 2, cv.height * 0.54);
+      const gl = this.gl;
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      e = { tex, w: cv.width, h: cv.height, used: 0 };
+      this.texts.set(key, e);
+    }
+    e.used = performance.now();
+    return e;
+  }
+
+  _gcTexts(now) {
+    for (const [k, e] of this.texts) {
+      if (now - e.used > 5000) { this.gl.deleteTexture(e.tex); this.texts.delete(k); }
+    }
   }
 
   /** Render a heavy effect into a per-shape texture sized to fxScale. */
@@ -461,6 +602,7 @@ export class Renderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, w, 0, 0, h, 0, h, w, 0, w, h]), gl.DYNAMIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.disableVertexAttribArray(1);
     if (p.u.u_res) gl.uniform2f(p.u.u_res, w, h);
     this._fxUniforms(p.u, c, t, aspect, seed);
     gl.drawArrays(gl.TRIANGLES, 0, 6);

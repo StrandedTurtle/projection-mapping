@@ -49,7 +49,7 @@ jobs:
         run: |
           BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
           unzip -l dist/projection-mapper.apk > apk.txt
-          for f in assets/display.html assets/index.html assets/js/engine/renderer.js assets/js/vendor/qrcode.js classes.dex; do
+          for f in assets/display.html assets/index.html assets/js/engine/renderer.js assets/js/engine/effects-packs.js assets/js/vendor/qrcode.js classes.dex app/projectionmapper/server/tls/cert.pem app/projectionmapper/server/tls/key.pem; do
             grep -q " $f\$" apk.txt || { echo "::error::APK is missing $f"; cat apk.txt; exit 1; }
           done
           "$BT"/aapt2 dump badging dist/projection-mapper.apk > badging.txt
@@ -76,14 +76,14 @@ jobs:
         with:
           name: projection-mapper
           path: dist
-      - name: Publish v1.0.${{ github.run_number }}
+      - name: Publish v1.1.${{ github.run_number }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          # The tag matches the APK's versionName (1.0.<run number>), so update
+          # The tag matches the APK versionName (1.1.<run number>), so update
           # checkers such as Obtainium see every new build as a new version.
-          TAG="v1.0.${GITHUB_RUN_NUMBER}"
+          TAG="v1.1.${GITHUB_RUN_NUMBER}"
           for attempt in 1 2 3; do
             if gh release create "$TAG" dist/projection-mapper.apk dist/projection-mapper-server.jar \
                 --target "$GITHUB_SHA" --latest \

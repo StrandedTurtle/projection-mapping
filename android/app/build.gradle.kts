@@ -11,7 +11,7 @@ android {
         minSdk = 23
         targetSdk = 35
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
-        versionName = "1.0." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+        versionName = "1.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
     }
 
     // A fixed key checked into the repo so every build (local or CI) can be

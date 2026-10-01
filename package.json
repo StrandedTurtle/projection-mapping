@@ -1,6 +1,6 @@
 {
   "name": "projection-mapper",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Free projection mapping for Google TV / Android TV projectors, controlled from your phone.",
   "scripts": {

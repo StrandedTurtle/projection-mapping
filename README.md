@@ -13,10 +13,13 @@ Think "Lazy Lighting", without the paywall.
 
 | | |
 |---|---|
-| **Mapping** | Rectangles (true perspective warp), triangles, circles/ellipses, free shapes with up to 64 corners. Drag corners on the phone while a crosshair on the wall shows the exact corner. Magnifier loupe while dragging, "fine drag" mode, pixel-perfect arrow pad (1/5/25 px), scale/rotate/mirror, add or remove corners, layers, lock, hide, duplicate. |
-| **25 animated effects** | Solid, Gradient, Rainbow, Color Cycle, Breathe, Strobe, Plasma, Fire, Water, Stripes, Checker, Sparkle, Clouds, Scanner, Spiral, Ripples, Edge Glow, Marquee Lights, Storm, Snowfall, Spooky Eyes, Digital Rain, Dot Wave, TV Static, Lava Lamp. Every one has colors, speed, size and an effect-specific slider. All run on the GPU. |
+| **Mapping** | Rectangles (true perspective warp), triangles, circles/ellipses, free shapes with up to 64 corners. **Bendable edges** for arches, columns and curved walls. Drag corners on the phone while a crosshair on the wall shows the exact corner. Magnifier loupe while dragging, "fine drag" mode, pixel-perfect arrow pad (1/5/25 px), scale/rotate/mirror, add or remove corners, layers, lock, hide, duplicate. |
+| **50 animated effects** | *Basics:* Solid, Gradient, Rainbow, Color Cycle, Breathe, Strobe, Stripes, Checker, Scanner, Edge Glow, Marquee Lights. *Holiday:* Jack-o'-Lantern (lip-syncs to music), Ghosts, Bats & Moon, Spooky Eyes, Storm, Fire, Stained Glass, Snowfall, Sparkle, Fireworks, Confetti, Falling Leaves. *Building illusions:* Crumbling Bricks, 3D Carved Panel, Searchlights, Waterfall, Neon Grid, Wireframe Web, Cozy Window, Pixel Mosaic. *Trippy:* Kaleidoscope, Tunnel, Colour Morph, Liquid Marble, Plasma, Spiral, Warp Speed, Northern Lights, Lava Lamp. *Nature/calm:* Water, Clouds, Ripples, Fireflies, Rain on Glass, Dot Wave. *Sound:* Equalizer, Bass Rings. Every one has colours, speed, size and its own slider. All run on the GPU. |
+| **🎤 Sound-reactive** | Your phone listens to the music and the projector reacts: any shape can pulse with the bass, flash on every beat or speed up with the music. Equalizer, Bass Rings and the singing jack-o'-lantern use the sound directly. |
+| **Sequences** | Light your shapes up in turn: chase, ping-pong, wave, build-up, alternate, twinkle, or step **on the beat**. Ordered left→right, top→bottom, centre-out… |
+| **Text** | Scrolling or still messages on any shape ("Happy Birthday!", "Trick or treat"), four fonts, colours, emoji. |
 | **Your own media** | Upload photos and videos straight from your phone's gallery and map them onto any shape (stretch / fill / fit, tint). |
-| **Themes** | One tap re-skins every shape: Halloween 🎃, Christmas 🎄, Party 🪩, Chill 🌊, Fire & Ice, Architecture, All White. |
+| **Themes** | One tap re-skins every shape: Halloween 🎃, Haunted House 👻, Christmas 🎄, New Year 🎆, Party 🪩, Trippy 🌀, Space 🌌, Neon City 🌃, Autumn 🍂, Chill 🌊, Fire & Ice, Architecture, All White. |
 | **Scenes + slideshow** | Save looks as scenes, switch instantly, or cycle through them automatically with a crossfade. The projector keeps running the slideshow when your phone is off. |
 | **Show control** | Blackout, master brightness, edit-mode outlines on/off, alignment grid, soft edges, opacity, background color, flash shape names. |
 | **Comfort** | Undo/redo, auto-save on the projector, export/import backups, several phones at once, auto-reconnect, works offline on your home Wi-Fi. |
@@ -72,6 +75,24 @@ Obtainium spots and installs updates. Your phone needs no app at all: the contro
 4. Open **Look** and pick an effect or upload a photo/video. Or open **Scenes** and tap a **Theme**.
 5. Tap the **outline button** (top bar) to hide the edit outlines, and enjoy.
 
+### Sound mode 🎤
+
+1. Tap the **🎤** button at the top of the controller.
+2. Phones only allow the microphone on a *secure* page, so the controller asks to switch to the secure
+   version (`https://…:8443`). Your phone will warn **"Your connection is not private"**. That's expected:
+   tap **Advanced → Proceed**. It's your own projector on your own Wi-Fi, so it's safe, and you only do it once.
+3. Tap **🎤** again to start listening, and keep that screen open near the speaker.
+4. Choose what reacts: **Projector → Make every shape react**, or per shape on its **Look** tab
+   (*React to sound*: Pulse / Beat flash / Speed). Sequences can also step **On the beat**.
+
+### Sequences, text and bent edges
+
+- **Scenes → Sequence:** turn it on, pick a pattern and an order. Untick *In sequence* on a shape's Look tab to keep it always on.
+  Sequences are saved with scenes.
+- **Look → Text:** type a message, choose Scrolling or Still, a font and colours.
+- **Bent edges:** select a rectangle, tap **⌒ Bend**, then drag the blue diamonds in the middle of each edge.
+  The picture follows the curve. **Straighten** undoes it.
+
 **TV remote:** OK/Enter shows or hides the QR code. Press Back twice to exit (so you don't end a show by accident).
 
 ### Mapping tips
@@ -100,6 +121,8 @@ and scan the QR code with your phone. You can also use the Java server from the 
 
 | Problem | Fix |
 |---|---|
+| Sound mode: "not private" warning | Expected. The secure page uses a self-signed certificate (there's no way to get a "real" one for a device on your home network). Tap Advanced → Proceed. |
+| Sound mode stops | Phones cut the mic off when the screen turns off or you switch apps. Keep the controller open; the phone's screen stays on while it listens. |
 | Phone can't open the address | Phone and projector must be on the same network. Guest Wi‑Fi and "AP/client isolation" block devices from seeing each other. Turn off VPNs on the phone. |
 | QR shows a strange IP | The projector may have Ethernet and Wi‑Fi at the same time. Try the other address, or disconnect the one you don't use. |
 | "Projector app closed" on the phone | Open Projection Mapper on the projector again. The phone reconnects automatically. |
@@ -121,8 +144,11 @@ android/
 tests/                  unit tests + Playwright end-to-end tests (run against BOTH servers)
 ```
 
-- Every surface is drawn by the GPU. Each shape's content is computed per pixel through the inverse perspective
-  homography of its 4 corners, so textures stay straight on angled walls. Free shapes use ear-clipping triangulation.
+- Every surface is drawn by the GPU as a finely subdivided mesh: quads follow the perspective homography of their 4
+  corners (plus a Coons-patch blend when edges are bent), so textures stay straight on angled walls. Free shapes use
+  ear-clipping triangulation. Heavy effects render at a reduced resolution that adapts to the projector's frame rate.
+- The servers also listen on https (port 8443) with a fixed self-signed certificate, purely so phone browsers allow the
+  microphone. The certificate is the same for everyone and only protects traffic on your own network.
 - The projector holds the project and saves it (`/api/state` + localStorage). Phones send small edit operations over a
   WebSocket; the server just relays them. Every device applies the same deterministic ops, so all stay in sync.
 
