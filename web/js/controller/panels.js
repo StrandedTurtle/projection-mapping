@@ -545,6 +545,11 @@ export function initPanels(stage) {
   bindSwitch('outlineToggle', 'showOutlines');
   bindSwitch('gridToggle', 'testPattern');
   bindSwitch('qrToggle', 'showQR');
+  bindSwitch('fpsToggle', 'showFps');
+  $('qualitySeg').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    setGlobal({ quality: b.dataset.q });
+  });
   let previewOn = true;
   try { previewOn = localStorage.getItem('pm-preview') !== '0'; } catch (e) { /* ignore */ }
   stage.setPreview(previewOn);
@@ -587,6 +592,8 @@ export function initPanels(stage) {
     $('gridToggle').checked = !!g.testPattern;
     $('qrToggle').checked = !!g.showQR;
     $('bgInput').value = g.background || '#000000';
+    segSet($('qualitySeg'), 'q', g.quality || 'auto');
+    $('fpsToggle').checked = !!g.showFps;
   }
 
   // ---------------- header state / status ----------------

@@ -29,6 +29,8 @@
   #toast { position: fixed; left: 50%; top: 4vh; transform: translateX(-50%) translateY(-20vh); transition: transform .35s ease;
     background: rgba(12,12,20,.92); border: 1px solid rgba(255,255,255,.15); padding: 1.6vh 3vh; border-radius: 99vh; font-size: 2.6vh; }
   #toast.show { transform: translateX(-50%) translateY(0); }
+  #fps { position: fixed; left: 1.5vh; top: 1.5vh; font: 600 2vh ui-monospace, Menlo, monospace; color: #a3e635;
+    background: rgba(0,0,0,.6); padding: .5vh 1vh; border-radius: .8vh; pointer-events: none; }
   #err { position: fixed; left: 2vh; bottom: 2vh; font-size: 2vh; color: #fca5a5; }
 </style>
 </head>
@@ -50,6 +52,7 @@
 </div>
 <div id="toast"></div>
 <div id="err"></div>
+<div id="fps" style="display:none"></div>
 <script src="js/vendor/qrcode.js"></script>
 <script type="module" src="js/display.js"></script>
 </body>

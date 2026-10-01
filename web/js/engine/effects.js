@@ -10,6 +10,9 @@
 //   u_aspect  surface width / height (for round, non-stretched patterns)
 //   u_seed    random 0..1 per surface, so copies don't look identical
 //   edge()    normalised distance to the surface edge (only if needsEdge)
+// Effects marked heavy:true are rendered at reduced resolution into a texture
+// (they must not use edge()); soft/organic looks hide the lower resolution.
+// minRes keeps effects with fine detail (eyes, sparkles) from getting blurry.
 // Helpers: hash, hash2, noise, fbm, hsv2rgb, rot, ramp3, P(uv) isotropic coords.
 
 export const PARAMS = {
@@ -85,7 +88,7 @@ export const EFFECTS = [
     }`,
   },
   {
-    id: 'plasma', name: 'Plasma', tags: ['party', 'calm'],
+    id: 'plasma', heavy: true, name: 'Plasma', tags: ['party', 'calm'],
     params: ['c1', 'c2', 'c3', 'speed', 'scale'],
     defaults: { c1: '#ff006e', c2: '#8338ec', c3: '#3a86ff', speed: 1, scale: 1 },
     glsl: `vec3 fx(vec2 uv){
@@ -97,7 +100,7 @@ export const EFFECTS = [
     }`,
   },
   {
-    id: 'fire', name: 'Fire', tags: ['halloween'],
+    id: 'fire', heavy: true, name: 'Fire', tags: ['halloween'],
     params: ['c1', 'c2', 'c3', 'speed', 'scale', 'amount'],
     defaults: { c1: '#ff1e00', c2: '#ff9d00', c3: '#fff3b0', speed: 1, scale: 1, amount: 0.5 },
     labels: { amount: 'Height' },
@@ -114,7 +117,7 @@ export const EFFECTS = [
     }`,
   },
   {
-    id: 'water', name: 'Water', tags: ['calm'],
+    id: 'water', heavy: true, name: 'Water', tags: ['calm'],
     params: ['c1', 'c2', 'speed', 'scale'],
     defaults: { c1: '#003366', c2: '#7fdbff', speed: 0.6, scale: 1 },
     glsl: `vec3 fx(vec2 uv){
@@ -154,7 +157,7 @@ export const EFFECTS = [
     }`,
   },
   {
-    id: 'sparkle', name: 'Sparkle', tags: ['christmas', 'calm'],
+    id: 'sparkle', heavy: true, minRes: 0.5, name: 'Sparkle', tags: ['christmas', 'calm'],
     params: ['c1', 'c2', 'speed', 'scale', 'amount'],
     defaults: { c1: '#fff4c2', c2: '#000000', speed: 1, scale: 1, amount: 0.5 },
     labels: { amount: 'Density' },
@@ -171,7 +174,7 @@ export const EFFECTS = [
     }`,
   },
   {
-    id: 'clouds', name: 'Clouds', tags: ['calm', 'halloween'],
+    id: 'clouds', heavy: true, name: 'Clouds', tags: ['calm', 'halloween'],
     params: ['c1', 'c2', 'speed', 'scale', 'amount'],
     defaults: { c1: '#ffffff', c2: '#1b2a6b', speed: 0.5, scale: 1, amount: 0.5 },
     labels: { amount: 'Contrast' },
@@ -256,7 +259,7 @@ export const EFFECTS = [
     }`,
   },
   {
-    id: 'lightning', name: 'Storm', tags: ['halloween'],
+    id: 'lightning', heavy: true, name: 'Storm', tags: ['halloween'],
     params: ['c1', 'c2', 'speed', 'amount'],
     defaults: { c1: '#cfd8ff', c2: '#0a0a1a', speed: 1, amount: 0.3 },
     labels: { amount: 'Frequency' },
@@ -271,7 +274,7 @@ export const EFFECTS = [
     }`,
   },
   {
-    id: 'snow', name: 'Snowfall', tags: ['christmas', 'calm'],
+    id: 'snow', heavy: true, minRes: 0.45, name: 'Snowfall', tags: ['christmas', 'calm'],
     params: ['c1', 'c2', 'speed', 'scale', 'amount'],
     defaults: { c1: '#ffffff', c2: '#0b1a3a', speed: 1, scale: 1, amount: 0.6 },
     labels: { amount: 'Density' },
@@ -295,7 +298,7 @@ export const EFFECTS = [
     }`,
   },
   {
-    id: 'eyes', name: 'Spooky Eyes', tags: ['halloween'],
+    id: 'eyes', heavy: true, minRes: 0.6, name: 'Spooky Eyes', tags: ['halloween'],
     params: ['c1', 'c2', 'speed', 'scale', 'amount'],
     defaults: { c1: '#ffdd00', c2: '#000000', speed: 1, scale: 1, amount: 0.35 },
     labels: { amount: 'How many' },
@@ -323,7 +326,7 @@ export const EFFECTS = [
     }`,
   },
   {
-    id: 'matrix', name: 'Digital Rain', tags: ['party'],
+    id: 'matrix', heavy: true, minRes: 0.5, name: 'Digital Rain', tags: ['party'],
     params: ['c1', 'c2', 'speed', 'scale'],
     defaults: { c1: '#00ff66', c2: '#000000', speed: 1, scale: 1 },
     glsl: `vec3 fx(vec2 uv){
@@ -367,7 +370,7 @@ export const EFFECTS = [
     }`,
   },
   {
-    id: 'lava', name: 'Lava Lamp', tags: ['calm', 'party'],
+    id: 'lava', heavy: true, name: 'Lava Lamp', tags: ['calm', 'party'],
     params: ['c1', 'c2', 'c3', 'speed', 'scale'],
     defaults: { c1: '#ff3d00', c2: '#ffea00', c3: '#2b0040', speed: 0.6, scale: 1 },
     glsl: `vec3 fx(vec2 uv){
@@ -405,7 +408,7 @@ float noise(vec2 p){
   vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
-float fbm(vec2 p){ float v = 0.0; float a = 0.5; for (int i = 0; i < 5; i++){ v += a * noise(p); p = p * 2.02 + 3.1; a *= 0.5; } return v; }
+float fbm(vec2 p){ float v = 0.0; float a = 0.5; for (int i = 0; i < 4; i++){ v += a * noise(p); p = p * 2.02 + 3.1; a *= 0.5; } return v; }
 vec3 hsv2rgb(vec3 c){ vec3 p = abs(fract(c.xxx + vec3(0.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0); return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y); }
 mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
 vec2 P(vec2 uv){ return (uv - 0.5) * vec2(max(u_aspect, 1.0), max(1.0 / u_aspect, 1.0)) * 2.0; }

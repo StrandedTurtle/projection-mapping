@@ -33,6 +33,7 @@ uniform int u_np;
 uniform float u_minDim;
 uniform float u_mask;
 uniform float u_feather;
+uniform float u_aa;
 uniform float u_opacity;
 uniform float u_bright;
 uniform sampler2D u_tex;
@@ -73,11 +74,27 @@ void main(){
     float r = length(uv - 0.5);
     if (r > 0.5) discard;
   }
-  if (u_feather > 0.0) a *= smoothstep(0.0, u_feather, edge());
+  // Soft edge (feather) or, when the canvas has no MSAA, a 1px analytic
+  // anti-aliased edge - cheaper than multisampling on TV GPUs.
+  float soft = max(u_feather, u_aa);
+  if (soft > 0.0) a *= smoothstep(0.0, soft, edge());
   vec4 c = shade(uv);
   float alpha = a * c.a;
   gl_FragColor = vec4(clamp(c.rgb, 0.0, 1.0) * u_bright * alpha, alpha);
 }`;
+}
+
+// Offscreen pass for heavy effects: computes fx(uv) once per texel of a small
+// texture (uv = texel position), which is then mapped onto the shape. The
+// effect's cost then depends on the texture size, not on how big the shape is
+// on the wall, and edges stay sharp because masking happens in the full-res pass.
+function fboSource(body) {
+  return fragSource(`${body}\nvec4 shade(vec2 uv){ return vec4(fx(uv), 1.0); }`)
+    .replace(/void main\(\)\{[\s\S]*\}$/, `void main(){
+  vec2 uv = gl_FragCoord.xy / u_res;
+  g_uv = uv; g_px = vec2(0.0);
+  gl_FragColor = vec4(clamp(fx(uv), 0.0, 1.0), 1.0);
+}`);
 }
 
 const TEX_BODY = `
@@ -110,11 +127,18 @@ function seedOf(id) {
 export class Renderer {
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {{maxDpr?: number, maxWidth?: number}} opts
+   * @param {{maxDpr?: number, maxWidth?: number, fxScale?: number}} opts
    */
   constructor(canvas, opts = {}) {
     this.canvas = canvas;
     this.opts = { maxDpr: 2, maxWidth: 3840, ...opts };
+    // Quality knobs (the projector adjusts these automatically):
+    //  fxScale  - resolution of heavy effects relative to their on-screen size
+    //             (1 = draw directly at full resolution)
+    //  resScale - resolution of the whole output (last resort, softens edges)
+    this.fxScale = opts.fxScale == null ? 0.5 : opts.fxScale;
+    this.resScale = 1;
+    this.fbos = new Map();
     this.state = null;
     this.times = new Map();
     this.fade = 1;
@@ -128,12 +152,15 @@ export class Renderer {
   }
 
   _init() {
-    const gl = this.canvas.getContext('webgl', { alpha: false, antialias: true, premultipliedAlpha: true, preserveDrawingBuffer: false })
+    const gl = this.canvas.getContext('webgl', { alpha: false, antialias: this.opts.antialias !== false, premultipliedAlpha: true, preserveDrawingBuffer: false })
       || this.canvas.getContext('experimental-webgl');
     if (!gl) throw new Error('WebGL is not available on this device');
     this.gl = gl;
+    this.analyticAA = !gl.getContextAttributes().antialias;
     this.programs = new Map();
     this.buf = gl.createBuffer();
+    this.quadBuf = gl.createBuffer();
+    this.fbos = new Map();
     for (const m of this.media.values()) m.tex = null;
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -159,16 +186,17 @@ export class Renderer {
     let p = this.programs.get(key);
     if (p !== undefined) return p;
     const gl = this.gl;
-    let body;
-    if (key === '__tex') body = TEX_BODY;
+    let src;
+    if (key === '__tex') src = fragSource(TEX_BODY);
+    else if (key.startsWith('fbo:')) src = fboSource((EFFECT_MAP[key.slice(4)] || EFFECT_MAP.solid).glsl);
     else {
       const fx = EFFECT_MAP[key] || EFFECT_MAP.solid;
-      body = `${fx.glsl}\nvec4 shade(vec2 uv){ return vec4(fx(uv), 1.0); }`;
+      src = fragSource(`${fx.glsl}\nvec4 shade(vec2 uv){ return vec4(fx(uv), 1.0); }`);
     }
     try {
       const prog = gl.createProgram();
       gl.attachShader(prog, this._compile(gl.VERTEX_SHADER, VS));
-      gl.attachShader(prog, this._compile(gl.FRAGMENT_SHADER, fragSource(body)));
+      gl.attachShader(prog, this._compile(gl.FRAGMENT_SHADER, src));
       gl.bindAttribLocation(prog, 0, 'a_pos');
       gl.linkProgram(prog);
       if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
@@ -191,14 +219,18 @@ export class Renderer {
 
   /** Pre-compile all shaders (avoids a hitch the first time an effect is picked). */
   warmup() {
-    for (const id of Object.keys(EFFECT_MAP)) this.program(id);
+    for (const [id, fx] of Object.entries(EFFECT_MAP)) {
+      this.program(id);
+      if (fx.heavy) this.program('fbo:' + id);
+    }
     this.program('__tex');
   }
 
   resize() {
     const c = this.canvas;
     const dpr = Math.min(window.devicePixelRatio || 1, this.opts.maxDpr);
-    let w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
+    const k = dpr * (this.resScale || 1);
+    let w = Math.round(c.clientWidth * k), h = Math.round(c.clientHeight * k);
     if (w > this.opts.maxWidth) { h = Math.round(h * this.opts.maxWidth / w); w = this.opts.maxWidth; }
     w = Math.max(w, 1); h = Math.max(h, 1);
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
@@ -302,7 +334,7 @@ export class Renderer {
         console.error('draw failed', err);
       }
     }
-    if (this.frames % 120 === 0) this._gcMedia(now);
+    if (this.frames % 120 === 0) { this._gcMedia(now); this._gcFbos(now); }
   }
 
   _drawShape(shape, c, t, W, H, master) {
@@ -315,14 +347,25 @@ export class Renderer {
       if (!tex) return; // still loading
       mediaAspect = m.h ? m.w / m.h : 1;
     }
-    const p = this.program(isMedia ? '__tex' : (c.effect || 'solid'));
-    if (!p) return;
     const pts = shape.points.slice(0, MAXP).map(([x, y]) => [x * W, y * H]);
     const idx = triangulate(pts);
     if (!idx.length) return;
+    const bb = bounds(pts);
+    const aspect = shapeAspect(shape.type, pts);
+    const seed = seedOf(shape.id);
+    const fx = EFFECT_MAP[c.effect] || EFFECT_MAP.solid;
+
+    // Heavy effects are computed into a small texture first (see fboSource).
+    let offscreen = false;
+    if (!isMedia && fx.heavy && Math.max(this.fxScale, fx.minRes || 0) < 1) {
+      tex = this._effectTexture(shape, c, t, fx, pts, bb, aspect, seed);
+      offscreen = !!tex;
+    }
+    const p = this.program(isMedia || offscreen ? '__tex' : fx.id);
+    if (!p) return;
+
     const verts = new Float32Array(idx.length * 2);
     for (let i = 0; i < idx.length; i++) { verts[i * 2] = pts[idx[i]][0]; verts[i * 2 + 1] = pts[idx[i]][1]; }
-
     gl.useProgram(p.prog);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
     gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
@@ -330,24 +373,16 @@ export class Renderer {
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
     const u = p.u;
-    const bb = bounds(pts);
-    const aspect = shapeAspect(shape.type, pts);
     const set1 = (name, v) => { if (u[name]) gl.uniform1f(u[name], v); };
     if (u.u_res) gl.uniform2f(u.u_res, W, H);
     if (u.u_inv) gl.uniformMatrix3fv(u.u_inv, false, toGL(uvMatrix(shape.type, pts)));
-    set1('u_t', t);
-    const tint = isMedia ? hexToRGB(c.tint || '#ffffff') : hexToRGB(c.c1 || '#ffffff');
-    if (u.u_c1) gl.uniform3fv(u.u_c1, tint);
-    if (u.u_c2) gl.uniform3fv(u.u_c2, hexToRGB(c.c2 || '#000000'));
-    if (u.u_c3) gl.uniform3fv(u.u_c3, hexToRGB(c.c3 || '#808080'));
-    set1('u_scale', c.scale == null ? 1 : c.scale);
-    set1('u_amount', c.amount == null ? 0.5 : c.amount);
-    set1('u_angle', ((c.angle || 0) * Math.PI) / 180);
-    set1('u_aspect', aspect);
-    set1('u_seed', seedOf(shape.id));
+    this._fxUniforms(u, c, t, aspect, seed);
+    if (isMedia) { if (u.u_c1) gl.uniform3fv(u.u_c1, hexToRGB(c.tint || '#ffffff')); }
+    else if (offscreen) { if (u.u_c1) gl.uniform3f(u.u_c1, 1, 1, 1); }
     set1('u_minDim', Math.max(1, Math.min(bb.w, bb.h)));
     set1('u_mask', shape.mask === 'ellipse' ? 1 : 0);
     set1('u_feather', (shape.feather || 0) * 0.5);
+    set1('u_aa', this.analyticAA ? 1.2 / Math.max(1, Math.min(bb.w, bb.h)) : 0);
     set1('u_opacity', shape.opacity == null ? 1 : shape.opacity);
     set1('u_bright', master);
     if (u.u_np) gl.uniform1i(u.u_np, pts.length);
@@ -356,9 +391,9 @@ export class Renderer {
       for (let i = 0; i < pts.length; i++) { flat[i * 2] = pts[i][0]; flat[i * 2 + 1] = pts[i][1]; }
       gl.uniform2fv(u.u_pts, flat);
     }
-    if (isMedia) {
+    if (tex) {
       let sx = 1, sy = 1;
-      const fit = c.fit || 'stretch';
+      const fit = isMedia ? (c.fit || 'stretch') : 'stretch';
       if (fit === 'cover') { if (mediaAspect > aspect) sx = aspect / mediaAspect; else sy = mediaAspect / aspect; }
       else if (fit === 'contain') { if (mediaAspect > aspect) sy = mediaAspect / aspect; else sx = aspect / mediaAspect; }
       if (u.u_texXf) gl.uniform4f(u.u_texXf, sx, sy, 0, 0);
@@ -367,6 +402,82 @@ export class Renderer {
       if (u.u_tex) gl.uniform1i(u.u_tex, 0);
     }
     gl.drawArrays(gl.TRIANGLES, 0, idx.length);
+  }
+
+  _fxUniforms(u, c, t, aspect, seed) {
+    const gl = this.gl;
+    const set1 = (name, v) => { if (u[name]) gl.uniform1f(u[name], v); };
+    set1('u_t', t);
+    if (u.u_c1) gl.uniform3fv(u.u_c1, hexToRGB(c.c1 || '#ffffff'));
+    if (u.u_c2) gl.uniform3fv(u.u_c2, hexToRGB(c.c2 || '#000000'));
+    if (u.u_c3) gl.uniform3fv(u.u_c3, hexToRGB(c.c3 || '#808080'));
+    set1('u_scale', c.scale == null ? 1 : c.scale);
+    set1('u_amount', c.amount == null ? 0.5 : c.amount);
+    set1('u_angle', ((c.angle || 0) * Math.PI) / 180);
+    set1('u_aspect', aspect);
+    set1('u_seed', seed);
+  }
+
+  /** Render a heavy effect into a per-shape texture sized to fxScale. */
+  _effectTexture(shape, c, t, fx, pts, bb, aspect, seed) {
+    const gl = this.gl;
+    const p = this.program('fbo:' + fx.id);
+    if (!p) return null;
+    let sw = bb.w, sh = bb.h;
+    if (shape.type === 'quad' && pts.length === 4) {
+      const d = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+      sw = Math.max(d(pts[0], pts[1]), d(pts[3], pts[2]));
+      sh = Math.max(d(pts[0], pts[3]), d(pts[1], pts[2]));
+    }
+    // Round up to 16px steps so dragging a corner doesn't reallocate every frame.
+    const k = Math.max(this.fxScale, fx.minRes || 0);
+    const q = (v) => Math.min(1024, Math.max(16, Math.ceil((v * k) / 16) * 16));
+    const w = q(sw), h = q(sh);
+    let f = this.fbos.get(shape.id);
+    if (!f || f.w !== w || f.h !== h) {
+      if (f) { gl.deleteFramebuffer(f.fb); gl.deleteTexture(f.tex); }
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const fb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      if (!ok) { gl.deleteFramebuffer(fb); gl.deleteTexture(tex); this.fbos.delete(shape.id); return null; }
+      f = { fb, tex, w, h, used: 0 };
+      this.fbos.set(shape.id, f);
+    }
+    f.used = performance.now();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f.fb);
+    gl.viewport(0, 0, w, h);
+    gl.disable(gl.BLEND);
+    gl.useProgram(p.prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, w, 0, 0, h, 0, h, w, 0, w, h]), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    if (p.u.u_res) gl.uniform2f(p.u.u_res, w, h);
+    this._fxUniforms(p.u, c, t, aspect, seed);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.enable(gl.BLEND);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    return f.tex;
+  }
+
+  _gcFbos(now) {
+    for (const [id, f] of this.fbos) {
+      if (now - f.used > 3000) {
+        this.gl.deleteFramebuffer(f.fb);
+        this.gl.deleteTexture(f.tex);
+        this.fbos.delete(id);
+      }
+    }
   }
 
   /** Render a frame and read back one pixel (0..1 coords). Used by tests. */

@@ -104,7 +104,7 @@ and scan the QR code with your phone. You can also use the Java server from the 
 | QR shows a strange IP | The projector may have Ethernet and Wi‑Fi at the same time. Try the other address, or disconnect the one you don't use. |
 | "Projector app closed" on the phone | Open Projection Mapper on the projector again. The phone reconnects automatically. |
 | Video doesn't play | Use MP4 (H.264). Very large 4K videos may be too heavy for small TV chips; 1080p is ideal. |
-| Effects stutter | Fewer large overlapping shapes help. Heavy effects: Water, Fire, Clouds, Lava Lamp. |
+| Effects stutter | Quality is automatic: the projector watches its own frame rate and renders heavy effects (fire, water, clouds…) at a lower internal resolution until it's smooth. You can pin it under **Projector → Performance** (Sharpest / Balanced / Fast) and turn on **Show frame rate** to see the fps. |
 
 ## How it works / development
 
@@ -131,6 +131,7 @@ npm install
 npm test            # unit tests
 npm run test:e2e    # headless Chromium: projector page + phone pages through the Node AND Java servers
 npm start           # run locally on :8080
+node tools/bench.mjs   # GPU cost of every effect at 1080p (with the server running on :8099)
 ```
 
 Building the APK locally needs the Android SDK: `cd android && ./gradlew assembleRelease`.

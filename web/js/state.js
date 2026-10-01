@@ -23,6 +23,8 @@ export function defaultGlobal() {
     showQR: false,
     background: '#000000',
     aspect: 16 / 9,
+    quality: 'auto', // auto | high | balanced | performance
+    showFps: false,
   };
 }
 
