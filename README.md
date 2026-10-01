@@ -24,14 +24,14 @@ Think "Lazy Lighting", without the paywall.
 ## Install on the projector (Google TV / Android TV)
 
 Every push to this repository builds the app automatically (GitHub Actions). The current APK is on the
-[**Releases → latest**](../../releases/tag/latest) page as `projection-mapper.apk`.
+[**latest release**](../../releases/latest) page as `projection-mapper.apk`.
 
 Pick whichever install method is easiest for you.
 
 ### Option A – "Send Files to TV" (no computer needed)
 
 1. On the projector, open the Play Store and install **Send Files to TV**. Install the same app on your phone.
-2. On your phone, download `projection-mapper.apk` from the Releases page (you need to be logged in to GitHub, because the repo is private).
+2. On your phone, download `projection-mapper.apk` from the latest release.
 3. On the projector: **Settings → Apps → Security & restrictions → Unknown sources** and allow **Send Files to TV**.
    On some models it's **Settings → Privacy → Security & restrictions**.
 4. Open Send Files to TV on both devices. On the TV choose **Receive**, on the phone **Send** and pick the APK.
@@ -48,11 +48,16 @@ Pick whichever install method is easiest for you.
    adb install -r projection-mapper.apk
    ```
 
-### Option C – "Downloader" app (only if you make the repo public)
+### Option C – "Downloader" app on the TV
 
-The Downloader app (by AFTVnews) can fetch
-`https://github.com/StrandedTurtle/projection-mapping/releases/latest/download/projection-mapper.apk` directly.
-That link only works for public repos.
+Install **Downloader** (by AFTVnews) from the TV's Play Store and enter:
+`https://github.com/StrandedTurtle/projection-mapping/releases/latest/download/projection-mapper.apk`
+
+### Automatic updates with Obtainium
+
+Install [Obtainium](https://github.com/ImranR98/Obtainium) **on the TV** and add
+`https://github.com/StrandedTurtle/projection-mapping`. Every build is a numbered release (`v1.0.N`), so
+Obtainium spots and installs updates. Your phone needs no app at all: the controller opens in its browser.
 
 > Updates install over the top and keep your saved mapping, because every build is signed with the same key
 > (`android/app/projection-mapper.keystore`).

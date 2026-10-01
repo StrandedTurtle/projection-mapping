@@ -64,34 +64,37 @@ jobs:
           path: dist/
 
   release:
-    name: Publish "latest" release
+    name: Publish release
     needs: [test, apk]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     concurrency:
-      group: publish-latest-release
+      group: publish-release
       cancel-in-progress: false
     steps:
       - uses: actions/download-artifact@v5
         with:
           name: projection-mapper
           path: dist
-      - name: Replace the "latest" release with this build
+      - name: Publish v1.0.${{ github.run_number }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          # Delete + recreate so the "latest" tag always points at this commit.
-          # Retried because GitHub occasionally rejects a create right after a delete.
+          # The tag matches the APK's versionName (1.0.<run number>), so update
+          # checkers such as Obtainium see every new build as a new version.
+          TAG="v1.0.${GITHUB_RUN_NUMBER}"
           for attempt in 1 2 3; do
-            gh release delete latest --cleanup-tag -y || true
-            sleep $((attempt * 5))
-            if gh release create latest dist/projection-mapper.apk dist/projection-mapper-server.jar \
-                --target "$GITHUB_SHA" \
-                --title "Latest build (${GITHUB_REF_NAME} @ ${GITHUB_SHA::7})" \
-                --notes "Install **projection-mapper.apk** on your Google TV / Android TV projector. See the README for step-by-step install instructions. Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA}."; then
-              exit 0
+            if gh release create "$TAG" dist/projection-mapper.apk dist/projection-mapper-server.jar \
+                --target "$GITHUB_SHA" --latest \
+                --title "Projection Mapper $TAG" \
+                --notes "Install **projection-mapper.apk** on your Google TV / Android TV projector (see the README). Your phone needs no app: scan the QR code shown on the projector. Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}."; then
+              break
             fi
-            echo "release create failed (attempt $attempt), retrying..."
+            [ "$attempt" = 3 ] && exit 1
+            echo "release create failed (attempt $attempt), retrying..."; sleep $((attempt * 5))
           done
-          exit 1
+          # Tidy up: drop the old fixed "latest" release and keep the 5 newest builds.
+          gh release delete latest --cleanup-tag -y 2>/dev/null || true
+          gh release list --limit 100 --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
+            while read -r old; do gh release delete "$old" --cleanup-tag -y || true; done
